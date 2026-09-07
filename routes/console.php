@@ -8,10 +8,10 @@ Artisan::command('inspire', function () {
     $this->comment(Inspiring::quote());
 })->purpose('Display an inspiring quote');
 
-// La limpieza BORRA sesiones vencidas. Correrla cada minuto hacia que una demo
-// desapareciera en plena presentacion (y todo empezaba a dar 404 "No query results").
-// Una vez al dia de madrugada es suficiente: las demos vencidas dejan de usarse igual
-// por la validacion demo_expired, pero ya no se borran mientras las tienes abiertas.
+// Archiva (soft-delete) las demos y sesiones vencidas: salen de las listas de trabajo
+// activas pero Registro de Actividad e Historial de Transcripciones las siguen mostrando
+// (Sesion::withTrashed()). Antes se borraban de verdad (cascade sobre transcripciones/
+// traducciones) y desaparecian de ahi sin dejar rastro.
 Schedule::command('spikia:sessions:cleanup')->dailyAt('04:00');
 
 // Los MP3 de traduccion se acumulan en storage/app/public/traducciones y nunca

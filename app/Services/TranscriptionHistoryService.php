@@ -23,7 +23,9 @@ class TranscriptionHistoryService
 
         $this->applyModeFilter($lastTranscriptionSubquery, $mode);
 
-        $paginator = Sesion::query()
+        // withTrashed(): una sesion archivada (borrada manualmente o vencida) no deja de tener
+        // historial de transcripciones - solo se saca de la lista de trabajo activa.
+        $paginator = Sesion::withTrashed()
             ->where('user_id', $user->id)
             ->whereHas('transcripciones', fn (Builder $query) => $this->applyModeFilter($query, $mode))
             ->when($search !== '', function (Builder $query) use ($like, $mode) {

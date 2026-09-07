@@ -69,7 +69,11 @@ class ActividadController extends Controller
 
     private function buildSesionesConEstadisticas(string $q = '', ?int $perPage = 15)
     {
-        $query = Sesion::withCount('transcripciones')
+        // withTrashed(): una sesion archivada (borrada manualmente o vencida) sigue contando
+        // como actividad ocurrida. Antes de SoftDeletes, borrar la sesion la hacia desaparecer
+        // de aca sin dejar rastro - justo lo que Registro de Actividad deberia evitar.
+        $query = Sesion::withTrashed()
+            ->withCount('transcripciones')
             ->with(['transcripciones' => fn ($query) => $query->latest()->limit(1)])
             ->where('user_id', auth()->id())
             ->when($q !== '', function ($query) use ($q) {
@@ -128,7 +132,7 @@ class ActividadController extends Controller
 
     private function activityTotals(string $q = ''): array
     {
-        $query = Sesion::where('user_id', auth()->id())
+        $query = Sesion::withTrashed()->where('user_id', auth()->id())
             ->when($q !== '', function ($query) use ($q) {
                 $like = '%' . str_replace(['\\', '%', '_'], ['\\\\', '\%', '\_'], $q) . '%';
 

@@ -64,7 +64,10 @@ class DashboardController extends Controller
         abort_unless($user, 401);
 
         $baseSlug = 'demo-es-en-' . $user->id;
-        $slug = Sesion::where('user_id', $user->id)->where('slug', $baseSlug)->exists()
+        // withTrashed(): el slug tiene UNIQUE a nivel de BD y una demo archivada (soft-deleted)
+        // sigue ocupando la fila fisicamente - sin esto, reactivar la demo de este usuario
+        // chocaria contra esa fila archivada y el insert fallaria.
+        $slug = Sesion::withTrashed()->where('user_id', $user->id)->where('slug', $baseSlug)->exists()
             ? $baseSlug . '-' . Str::lower(Str::random(6))
             : $baseSlug;
         $expiresAt = now()->addMinutes((int) config('spikia.demo_duration_minutes', 20));
