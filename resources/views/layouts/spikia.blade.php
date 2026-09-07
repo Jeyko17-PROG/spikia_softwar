@@ -8,7 +8,7 @@
 
     @stack('head-scripts')
     @stack('styles')
-    @vite(request()->routeIs('sesion.master', 'sesion.transmision', 'sesion.movil', 'sesion.avatar', 'sesion.interprete') ? ['resources/css/app.css'] : ['resources/css/app.css', 'resources/js/app.js'])
+    @vite(request()->routeIs('sesion.master', 'sesion.transmision', 'sesion.movil', 'sesion.avatar', 'sesion.interprete', 'sesion.subtitulos') ? ['resources/css/app.css'] : ['resources/css/app.css', 'resources/js/app.js'])
 </head>
 
 <body class="min-h-screen bg-gradient-to-br from-black via-zinc-900 to-black text-white">

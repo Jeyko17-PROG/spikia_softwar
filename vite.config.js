@@ -20,6 +20,7 @@ export default defineConfig({
                 'resources/js/listener.js',
                 'resources/js/master.js',
                 'resources/js/mobile.js',
+                'resources/js/subtitulos.js',
                 'resources/js/support.js',
                 'resources/js/sessions-index.js',
                 'resources/js/traduccion-simultanea.js',

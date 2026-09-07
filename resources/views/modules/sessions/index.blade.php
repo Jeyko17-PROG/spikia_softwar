@@ -96,6 +96,7 @@
                                 $urlTransmision = SpikiaUrl::public(route('sesion.transmision', ['slug' => $s->slug]));
                                 $urlTransmisionLocal = route('sesion.transmision', ['slug' => $s->slug]);
                                 $urlMasterLocal = route('sesion.master', ['slug' => $s->slug]);
+                                $urlSubtitulosLocal = route('sesion.subtitulos', ['slug' => $s->slug]);
                                 $urlAvatarLocal = route('sesion.avatar', ['slug' => $s->slug]);
                                 $urlInterpreteLocal = route('sesion.interprete', ['slug' => $s->slug]);
                                 $ownerName = $s->user?->name ?? auth()->user()->name;
@@ -128,6 +129,9 @@
                                             </a>
                                             <a href="{{ $urlMasterLocal }}" target="_blank" class="block text-[9px] font-black uppercase tracking-[0.25em] text-zinc-400 hover:text-white transition">
                                                 Abrir master
+                                            </a>
+                                            <a href="{{ $urlSubtitulosLocal }}" target="_blank" class="block text-[9px] font-black uppercase tracking-[0.25em] text-emerald-300 hover:text-white transition" title="Pantalla de solo subtitulos, para superponer en OBS/vMix">
+                                                Abrir subtítulos
                                             </a>
                                             @if(config('spikia.features.sign_avatar') && $s->has_sign_avatar)
                                                 <a href="{{ $urlAvatarLocal }}" target="_blank" class="block text-[9px] font-black uppercase tracking-[0.25em] text-fuchsia-300 hover:text-white transition" title="Demostración visual, no es interpretación real de Lengua de Señas">

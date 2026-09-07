@@ -21,6 +21,7 @@ Route::get('/', fn () => view('welcome'))->name('home');
 Route::get('/sesiones/{slug}/transmision', [SesionController::class, 'transmision'])->name('sesion.transmision');
 Route::get('/sesiones/{slug}/movil', [SesionController::class, 'movil'])->name('sesion.movil');
 Route::get('/sesiones/{slug}/avatar', [SesionController::class, 'avatar'])->name('sesion.avatar');
+Route::get('/sesiones/{slug}/subtitulos', [SesionController::class, 'subtitulos'])->name('sesion.subtitulos');
 Route::get('/sesiones/{slug}/mensajes', [SesionController::class, 'feed'])->name('sesiones.mensajes.feed');
 // Token de LiveKit para OYENTES (transmision/movil): publico, solo-suscripcion, sin
 // publicar nada. Necesario para que el oyente pueda recibir el video del interprete.

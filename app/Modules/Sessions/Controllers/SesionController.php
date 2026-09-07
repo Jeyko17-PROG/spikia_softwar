@@ -131,7 +131,7 @@ class SesionController extends Controller
         $baseSlug = Str::slug($data['titulo']);
         do {
             $candidate = $baseSlug . '-' . Str::lower(Str::random(6));
-        } while (Sesion::where('slug', $candidate)->exists());
+        } while (Sesion::withTrashed()->where('slug', $candidate)->exists());
         $sesion->slug = $candidate;
         $sesion->save();
         $this->recordSessionUsage($sesion, 'session_created');
@@ -314,6 +314,18 @@ class SesionController extends Controller
 
         return response()
             ->view('modules.sessions.avatar', compact('sesion'))
+            ->header('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0')
+            ->header('Pragma', 'no-cache')
+            ->header('Expires', '0');
+    }
+
+    public function subtitulos($slug)
+    {
+        $sesion = Sesion::where('slug', $slug)->firstOrFail();
+        $this->recordSessionUsage($sesion, 'subtitles_opened');
+
+        return response()
+            ->view('modules.sessions.subtitulos', compact('sesion'))
             ->header('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0')
             ->header('Pragma', 'no-cache')
             ->header('Expires', '0');
