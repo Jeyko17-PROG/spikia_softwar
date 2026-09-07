@@ -2,6 +2,18 @@
     display: none !important;
 }
 
+/* El icono nativo del selector de fecha/hora es oscuro por defecto: sobre el fondo negro del
+   input casi no se ve, y la gente no nota que ahi se abre el calendario/reloj. Se invierte a
+   blanco y se agranda un poco para que sea obvio que es clickeable. Solo Chrome/Edge (WebKit)
+   soportan este pseudo-elemento; Firefox no lo pinta pero el input sigue siendo usable. */
+input[type="date"]::-webkit-calendar-picker-indicator,
+input[type="time"]::-webkit-calendar-picker-indicator {
+    filter: invert(1) brightness(1.4);
+    cursor: pointer;
+    padding: 4px;
+    margin-right: 2px;
+}
+
 tbody tr td:nth-child(5) span.inline-flex.h-6.w-6.items-center.justify-center.rounded-full {
     display: none !important;
 }

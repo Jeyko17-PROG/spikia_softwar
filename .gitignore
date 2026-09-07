@@ -39,3 +39,9 @@ Thumbs.db
 *.msi
 cloudflared.exe
 ngrok.exe
+
+# Stubs de autocompletado para el editor (barryvdh/laravel-ide-helper). Se regeneran con
+# `php artisan ide-helper:generate` / `ide-helper:meta`; no aportan nada en runtime.
+/_ide_helper.php
+/_ide_helper_models.php
+/.phpstorm.meta.php
