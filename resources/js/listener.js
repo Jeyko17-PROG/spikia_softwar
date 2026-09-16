@@ -63,6 +63,9 @@ if (config) {
         const audioBtnBg = document.getElementById('audio-btn-bg');
         const iconAudioOn = document.getElementById('icon-audio-on');
         const iconAudioOff = document.getElementById('icon-audio-off');
+        const audioBtnLabel = document.getElementById('audio-btn-label');
+        const keepScreenBtn = document.getElementById('keep-screen-on-btn');
+        const subtitleSizeButtons = document.querySelectorAll('[data-subtitle-size]');
         const listenerClientIdStorageKey = 'spikia_listener_client_id';
         const seenMessages = new Map();
         const seenMessageKeys = new Set();
@@ -88,11 +91,10 @@ if (config) {
         }
 
         let myLang = localStorage.getItem('spikia_mobile_lang') || config.defaultLang || 'es-ES';
-        const storedAudioSetting = localStorage.getItem('spikia_audio_enabled');
-        let audioEnabled = storedAudioSetting === null
-            ? (config.audioDefaultEnabled ?? true)
-            : storedAudioSetting !== 'false';
+        let audioEnabled = false;
         let audioUnlocked = false;
+        let screenWakeLock = null;
+        let keepScreenOn = false;
         let pendingSpeechMessage = null;
         const listenerClientId = (() => {
             const existing = localStorage.getItem(listenerClientIdStorageKey);
@@ -189,11 +191,75 @@ if (config) {
                 .replace(/\b(\w+)(?:\s+\1\b)+/gi, '$1');
         }
 
+        function setSubtitleSize(size) {
+            const selectedSize = ['small', 'medium', 'large'].includes(size) ? size : 'medium';
+            container.classList.remove('subtitle-size-small', 'subtitle-size-medium', 'subtitle-size-large');
+            container.classList.add(`subtitle-size-${selectedSize}`);
+            subtitleSizeButtons.forEach((button) => {
+                button.classList.toggle('is-active', button.dataset.subtitleSize === selectedSize);
+            });
+            localStorage.setItem('spikia_subtitle_size', selectedSize);
+        }
+
         function updateAudioUI() {
             if (iconAudioOn) iconAudioOn.classList.toggle('hidden', !audioEnabled);
             if (iconAudioOff) iconAudioOff.classList.toggle('hidden', audioEnabled);
             if (audioBtnBg) audioBtnBg.classList.toggle('opacity-100', audioEnabled);
+            if (audioBtnLabel) audioBtnLabel.textContent = audioEnabled ? 'Volumen activado' : 'Activar volumen';
+            if (audioBtn) audioBtn.setAttribute('aria-label', audioEnabled ? 'Desactivar volumen' : 'Activar volumen');
             renderAudioUnlockNotice();
+        }
+
+        function updateKeepScreenUI() {
+            if (!keepScreenBtn) return;
+            const active = !!keepScreenOn;
+            keepScreenBtn.classList.toggle('border-emerald-400/60', active);
+            keepScreenBtn.classList.toggle('bg-emerald-500/10', active);
+            keepScreenBtn.classList.toggle('text-emerald-200', active);
+            keepScreenBtn.classList.toggle('shadow-[0_0_25px_rgba(16,185,129,0.18)]', active);
+            keepScreenBtn.classList.toggle('border-zinc-700/70', !active);
+            keepScreenBtn.classList.toggle('bg-zinc-950/90', !active);
+            keepScreenBtn.classList.toggle('text-zinc-200', !active);
+            const icon = '<svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9.75 17h4.5M7 9.5A5 5 0 0117 9.5v5.5a2 2 0 01-2 2H9a2 2 0 01-2-2V9.5zM9.5 4.5h5" /></svg>';
+            keepScreenBtn.innerHTML = `${icon}<span>${active ? 'Pantalla prendida' : 'Pantalla apagada'}</span>`;
+            keepScreenBtn.setAttribute('aria-pressed', active ? 'true' : 'false');
+        }
+
+        async function requestKeepScreenOn() {
+            if (!('wakeLock' in navigator) || keepScreenOn) {
+                return;
+            }
+
+            try {
+                screenWakeLock = await navigator.wakeLock.request('screen');
+                keepScreenOn = true;
+                updateKeepScreenUI();
+                screenWakeLock.addEventListener('release', () => {
+                    keepScreenOn = false;
+                    updateKeepScreenUI();
+                });
+            } catch (error) {
+                keepScreenOn = false;
+                updateKeepScreenUI();
+            }
+        }
+
+        async function releaseKeepScreenOn() {
+            if (!screenWakeLock) {
+                keepScreenOn = false;
+                updateKeepScreenUI();
+                return;
+            }
+
+            try {
+                await screenWakeLock.release();
+            } catch (error) {
+                // noop
+            } finally {
+                screenWakeLock = null;
+                keepScreenOn = false;
+                updateKeepScreenUI();
+            }
         }
 
         function primeAudioPlayback() {
@@ -258,8 +324,8 @@ if (config) {
             notice = document.createElement('button');
             notice.id = 'audio-unlock-notice';
             notice.type = 'button';
-            notice.className = 'hidden fixed left-1/2 top-24 z-[70] -translate-x-1/2 rounded-full border border-cyan-400/30 bg-zinc-950/95 px-5 py-3 text-[11px] font-black uppercase tracking-[0.25em] text-cyan-100 shadow-[0_0_30px_rgba(34,211,238,0.18)] backdrop-blur';
-            notice.innerHTML = '<span class="block">Toca para activar audio</span><span class="mt-1 block text-[9px] tracking-[0.18em] text-zinc-400">Sin este paso el navegador puede bloquear la voz.</span>';
+            notice.className = 'pointer-events-none hidden fixed inset-0 z-[70] flex items-center justify-center bg-black/25 px-6';
+            notice.innerHTML = '<span class="block rounded-2xl border border-cyan-400/30 bg-zinc-950/95 px-6 py-5 text-center text-sm font-black uppercase tracking-[0.18em] text-cyan-100 shadow-[0_0_30px_rgba(34,211,238,0.18)] backdrop-blur">Activa el botón de volumen para la traducción con voz<span class="mt-2 block text-[9px] font-medium normal-case tracking-[0.08em] text-zinc-400">Presiona el botón del parlante para comenzar</span></span>';
             const handleUnlockTap = (e) => {
                 if (e) {
                     try { e.preventDefault(); } catch (err) {}
@@ -275,10 +341,35 @@ if (config) {
             return notice;
         }
 
+        const AUDIO_OFF_NOTICE_MAX_MS = 3 * 1000; // 3 segundos
+        let audioOffNoticeTimer = null;
+        let audioOffNoticeSuppressed = false;
+
         function renderAudioUnlockNotice() {
             const notice = ensureAudioUnlockNotice();
-            const shouldShow = audioEnabled && !audioUnlocked;
-            notice.classList.toggle('hidden', !shouldShow);
+
+            if (audioEnabled) {
+                // El oyente SI quiere audio (solo falta desbloquearlo, ej. politica de
+                // autoplay del navegador): ese aviso es accionable, se mantiene sin limite.
+                if (audioOffNoticeTimer) {
+                    clearTimeout(audioOffNoticeTimer);
+                    audioOffNoticeTimer = null;
+                }
+                audioOffNoticeSuppressed = false;
+                notice.classList.toggle('hidden', audioUnlocked);
+                return;
+            }
+
+            // El oyente apago el audio a proposito: no lo molestamos con este aviso mas de
+            // 3 minutos - despues de eso se asume que eligio ver solo el subtitulo.
+            if (!audioOffNoticeSuppressed && !audioOffNoticeTimer) {
+                audioOffNoticeTimer = window.setTimeout(() => {
+                    audioOffNoticeTimer = null;
+                    audioOffNoticeSuppressed = true;
+                    renderAudioUnlockNotice();
+                }, AUDIO_OFF_NOTICE_MAX_MS);
+            }
+            notice.classList.toggle('hidden', audioOffNoticeSuppressed);
         }
 
         function queuePendingSpeech(texto, lang, variante, audioUrl = '') {
@@ -312,16 +403,6 @@ if (config) {
             audioUnlocked = true;
             renderAudioUnlockNotice();
             await flushPendingSpeech();
-        }
-
-        function registerAudioUnlockHandlers() {
-            const unlockFromInteraction = () => {
-                unlockAudio();
-            };
-
-            document.addEventListener('click', unlockFromInteraction, { passive: true });
-            document.addEventListener('touchstart', unlockFromInteraction, { passive: true });
-            document.addEventListener('keydown', unlockFromInteraction, { passive: true });
         }
 
         function activarBoton(lang) {
@@ -493,9 +574,9 @@ if (config) {
                 fr: 'fr-FR',
             };
             ut.lang = voiceMap[variante || lang] || 'es-ES';
-            ut.rate = 0.96;
+            ut.rate = 1.12;
             const gender = String(window.__SPIKIA_LAST_GENDER__ || '').toLowerCase();
-            ut.pitch = gender === 'male' ? 0.92 : 1.08;
+            ut.pitch = gender === 'male' ? 1.0 : 1.14;
 
             const voices = window.speechSynthesis.getVoices();
             const matchingVoices = voices.filter((v) => v.lang && v.lang.includes(ut.lang));
@@ -549,9 +630,14 @@ if (config) {
 
         const audioPlaybackQueue = [];
         let audioQueueRunning = false;
+        let audioPlaybackGeneration = 0;
         const MAX_AUDIO_QUEUE = 6;
 
         async function hablarTexto(texto, lang, variante, audioUrl = '') {
+            if (!audioEnabled) {
+                return;
+            }
+
             if (!audioUnlocked) {
                 queuePendingSpeech(texto, lang, variante, audioUrl);
                 return;
@@ -572,8 +658,14 @@ if (config) {
         async function runAudioQueue() {
             if (audioQueueRunning) return;
             audioQueueRunning = true;
+            const generation = audioPlaybackGeneration;
 
             while (audioPlaybackQueue.length > 0) {
+                if (!audioEnabled || generation !== audioPlaybackGeneration) {
+                    audioPlaybackQueue.length = 0;
+                    break;
+                }
+
                 const item = audioPlaybackQueue.shift();
                 try {
                     await playAudioItem(item);
@@ -586,17 +678,34 @@ if (config) {
         }
 
         async function playAudioItem({ texto, lang, variante, audioUrl }) {
-            if (audioUrl) {
-                const ok = await playAndAwait(audioUrl);
-                if (ok) return;
+            if (!audioEnabled) return;
+
+            const deliveryMode = String(
+                config.translationSettings?.audio_delivery_mode
+                || config.audioDeliveryMode
+                || 'ultra_fast'
+            ).toLowerCase();
+
+            if (deliveryMode === 'ultra_fast') {
+                if (!audioEnabled) return;
+                const browserOk = await speakWithBrowserAwait(texto, lang, variante);
+                if (browserOk) return;
             }
 
             const elevenLabsEnabled = getVoiceProvider() === 'elevenlabs' && config.voiceEndpoint;
             if (elevenLabsEnabled) {
+                if (!audioEnabled) return;
                 const ok = await speakWithElevenLabsAwait(texto, lang, variante);
                 if (ok) return;
             }
 
+            if (audioUrl) {
+                if (!audioEnabled) return;
+                const ok = await playAndAwait(audioUrl);
+                if (ok) return;
+            }
+
+            if (!audioEnabled) return;
             await speakWithBrowserAwait(texto, lang, variante);
         }
 
@@ -662,9 +771,9 @@ if (config) {
                         fr: 'fr-FR',
                     };
                     ut.lang = voiceMap[variante || lang] || 'es-ES';
-                    ut.rate = 1.0;
+                    ut.rate = 1.12;
                     const gender = String(window.__SPIKIA_LAST_GENDER__ || '').toLowerCase();
-                    ut.pitch = gender === 'male' ? 0.92 : 1.08;
+                    ut.pitch = gender === 'male' ? 1.0 : 1.14;
                     ut.onend = () => { emitAudioState(false); resolve(true); };
                     ut.onerror = () => { emitAudioState(false); resolve(false); };
                     emitAudioState(true);
@@ -682,7 +791,7 @@ if (config) {
             container.innerHTML = '';
 
             const p = document.createElement('p');
-            p.className = 'text-3xl font-black text-white animate-subtitle-in uppercase italic mb-4';
+            p.className = 'subtitle-text max-w-[85vw] rounded-xl border border-white/10 bg-black/35 px-4 py-2 text-center font-medium tracking-[0.08em] text-white/95 shadow-[0_0_24px_rgba(0,0,0,0.4)] animate-subtitle-in';
             p.innerText = collapseAdjacentRepeatedWords(texto);
             container.appendChild(p);
         }
@@ -724,7 +833,7 @@ if (config) {
                 <div class="inline-flex items-center rounded-full border border-amber-400/30 bg-amber-400/10 px-3 py-1 text-[9px] font-black uppercase tracking-[0.25em] text-amber-200">
                     Texto provisional
                 </div>
-                <p class="text-3xl font-black text-white/90 animate-subtitle-in uppercase italic mb-4">${normalizedText}</p>
+                <p class="subtitle-text max-w-[85vw] rounded-xl border border-white/10 bg-black/35 px-4 py-2 text-center font-medium tracking-[0.08em] text-white/95 shadow-[0_0_24px_rgba(0,0,0,0.4)] animate-subtitle-in">${normalizedText}</p>
             `;
             container.appendChild(wrapper);
         }
@@ -789,7 +898,9 @@ if (config) {
             const availableAtMs = rawAvailableAt > 0
                 ? (rawAvailableAt < 100000000000 ? rawAvailableAt * 1000 : rawAvailableAt)
                 : 0;
-            const wait = availableAtMs > 0 ? Math.max(0, availableAtMs - Date.now()) : 0;
+            const wait = availableAtMs > 0
+                ? Math.max(0, Math.min(availableAtMs - Date.now(), 750))
+                : 0;
 
             const timeoutId = window.setTimeout(() => {
                 pendingDisplayTimeouts.delete(timeoutId);
@@ -1007,10 +1118,11 @@ if (config) {
         let pollIntervalMs = 0;
 
         function pollIntervalForState() {
-            // Con push confirmado, el polling solo sirve de red de seguridad (reconexion,
-            // sync inicial, deteccion de demo vencida) - no hace falta cada 250-500ms.
-            if (echoConnected) return 4000;
-            return socket?.connected ? 500 : 250;
+            // La transmision debe verse casi en tiempo real como el master; con push activo
+            // seguimos haciendo polling corto para re-sync y para no perder mensajes si la
+            // conexion de Pusher/Echo flaquea o se reinicia. 4s es demasiado lag para texto.
+            if (echoConnected || socket?.connected) return 250;
+            return 250;
         }
 
         function schedulePolling() {
@@ -1030,13 +1142,34 @@ if (config) {
             if (audioEnabled) {
                 unlockAudio();
             } else {
+                audioPlaybackGeneration += 1;
+                audioPlaybackQueue.length = 0;
+                pendingSpeechMessage = null;
+                audioUnlocked = false;
                 stopCurrentVoiceAudio();
                 window.speechSynthesis.cancel();
+                emitAudioState(false);
             }
         });
 
+        if (keepScreenBtn) {
+            keepScreenBtn.addEventListener('click', async () => {
+                if (!keepScreenOn) {
+                    await requestKeepScreenOn();
+                } else {
+                    await releaseKeepScreenOn();
+                }
+            });
+
+            document.addEventListener('visibilitychange', async () => {
+                if (document.visibilityState === 'visible' && keepScreenOn && !screenWakeLock) {
+                    await requestKeepScreenOn();
+                }
+            });
+        }
+
         updateAudioUI();
-        registerAudioUnlockHandlers();
+        updateKeepScreenUI();
         activarBoton(myLang);
         setLanguage(myLang);
         subscribeRealtime();
@@ -1047,6 +1180,11 @@ if (config) {
         langBtns.forEach((btn) => {
             btn.addEventListener('click', () => setLanguage(btn.dataset.lang));
         });
+
+        subtitleSizeButtons.forEach((button) => {
+            button.addEventListener('click', () => setSubtitleSize(button.dataset.subtitleSize));
+        });
+        setSubtitleSize(localStorage.getItem('spikia_subtitle_size') || 'medium');
 
         window.setInterval(() => {
             if (!socket?.connected) return;

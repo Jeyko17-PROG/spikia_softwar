@@ -158,7 +158,7 @@ export async function downloadBrandedQrPng({
             const logo = await loadImage(logoUrl);
             const qrSize = Math.max(img.width, img.height) || 1024;
             const topSpace = Math.round(qrSize * 0.18);
-            const bottomSpace = Math.round(qrSize * 0.14);
+            const bottomSpace = Math.round(qrSize * (branding.code ? 0.2 : 0.14));
             const canvas = document.createElement('canvas');
             canvas.width = qrSize;
             canvas.height = qrSize + topSpace + bottomSpace;
@@ -222,14 +222,20 @@ export async function downloadBrandedQrPng({
             ctx.restore();
             drawLogoBadge(ctx, logo, centerX + 6, centerY + 6, centerSize - 12);
 
+            if (branding.code) {
+                ctx.fillStyle = '#ffffff';
+                ctx.font = `800 ${Math.round(qrSize * 0.032)}px "Consolas", "Courier New", monospace`;
+                ctx.fillText(branding.code, canvas.width / 2, canvas.height - Math.round(bottomSpace * 0.74));
+            }
+
             ctx.fillStyle = '#dbe6f3';
             ctx.font = `600 ${Math.round(qrSize * 0.017)}px "Segoe UI", Arial, sans-serif`;
-            ctx.fillText(branding.subtitle || 'Panel de sesiones', canvas.width / 2, canvas.height - Math.round(bottomSpace * 0.56));
+            ctx.fillText(branding.subtitle || 'Panel de sesiones', canvas.width / 2, canvas.height - Math.round(bottomSpace * (branding.code ? 0.42 : 0.56)));
 
             if (branding.url) {
                 ctx.fillStyle = '#63f5ff';
                 ctx.font = `700 ${Math.round(qrSize * 0.0135)}px "Consolas", "Courier New", monospace`;
-                ctx.fillText(branding.url, canvas.width / 2, canvas.height - Math.round(bottomSpace * 0.22));
+                ctx.fillText(branding.url, canvas.width / 2, canvas.height - Math.round(bottomSpace * 0.14));
             }
 
             const pngBlob = await canvasToBlob(canvas, 'image/png');

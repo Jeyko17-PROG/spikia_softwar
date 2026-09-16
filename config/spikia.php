@@ -42,6 +42,45 @@ return [
         'style' => (float) env('ELEVENLABS_STYLE', 0),
         'use_speaker_boost' => (bool) env('ELEVENLABS_USE_SPEAKER_BOOST', true),
     ],
+    // PoC/benchmark (ver informe "reduccion de delay"): permite comparar el motor de
+    // traduccion actual (Chat Completions, translateBatch) contra OpenAI Realtime API sin
+    // tocar el flujo de produccion. 'current' dejar TODO igual; 'realtime_experimental'
+    // activa Realtime SOLO para el idioma de poc_target_language, con fallback automatico
+    // al motor actual si la conexion Realtime falla.
+    'realtime_translation' => [
+        // current | realtime_experimental (texto, brazo 1) | realtime_audio_experimental
+        // (audio + gpt-realtime-2.1 con VAD, brazo A) | realtime_translate_dedicated_experimental
+        // (audio + gpt-realtime-translate, streaming continuo, brazo B). Ver informe
+        // "A vs B: menor latencia real".
+        'engine' => env('SPIKIA_TRANSLATION_ENGINE', 'realtime_audio_experimental'),
+        'model' => env('OPENAI_REALTIME_MODEL', 'gpt-realtime-2.1'),
+        // Brazo B: modelo de traduccion dedicado. OJO (verificado en la doc de OpenAI): NO
+        // soporta instructions/prompt personalizado - el glosario/master_translation_prompt
+        // que SI aplica en los otros brazos, aca no aplica. Solo se puede fijar el idioma
+        // de salida.
+        'translation_dedicated_model' => env('OPENAI_REALTIME_TRANSLATION_MODEL', 'gpt-realtime-translate'),
+        // Solo brazo B: esta sesion no tiene un evento de "fin de frase" (transmite
+        // continuo). Este gap (ms sin deltas nuevos) es una heuristica que Spikia inventa
+        // UNICAMENTE para poder medir el benchmark - no cambia el comportamiento real del
+        // modelo ni se usa para nada mas.
+        'segment_gap_ms' => (int) env('OPENAI_REALTIME_SEGMENT_GAP_MS', 900),
+        'poc_target_language' => 'en',
+        // PCM16 24kHz: formato que exige la Realtime API para audio de entrada. OJO: es
+        // distinto de los 16kHz que usa Deepgram hoy (downsampleAndConvert de master.js no
+        // se reusa tal cual, ver realtime-audio-poc.js).
+        'audio_sample_rate' => 24000,
+        // VAD/turn detection del brazo de audio (session.audio.input.turn_detection). El
+        // modelo dedicado de traduccion de OpenAI NO expone esto (segmentacion interna,
+        // ver informe); por eso el brazo de audio usa el modelo Realtime general, que si
+        // lo permite. semantic_vad+high = prioriza latencia baja sobre esperar frases
+        // "completas" segun el propio juicio del modelo.
+        'vad' => [
+            'type' => env('OPENAI_REALTIME_VAD_TYPE', 'semantic_vad'), // semantic_vad | server_vad
+            'eagerness' => env('OPENAI_REALTIME_VAD_EAGERNESS', 'high'), // low|medium|high|auto (solo semantic_vad)
+            'silence_duration_ms' => (int) env('OPENAI_REALTIME_VAD_SILENCE_MS', 400), // solo server_vad
+        ],
+    ],
+
     'default_license_plan' => 'free',
     'license_plans' => [
         'free' => [
@@ -89,7 +128,7 @@ return [
         'voice_provider'           => env('SPIKIA_VOICE_PROVIDER', 'elevenlabs'),
         'voice_gender_profile'     => 'female',
         'voice'                    => 'marin',
-        'audio_delivery_mode'      => 'ultra_fast',
+        'audio_delivery_mode'      => env('SPIKIA_AUDIO_DELIVERY_MODE', 'ultra_fast'),
         'master_translation_prompt' => 'Eres un traductor médico simultáneo. Traduce TODO el texto recibido de forma literal y COMPLETA, sin resumir, sin omitir palabras, sin acortar oraciones. Conserva muletillas, nombres propios, tecnicismos médicos, números, dosis y unidades exactamente como aparecen. Si el texto tiene errores de transcripción interpreta lo más fielmente posible. Responde SOLO con la traducción, sin comentarios, sin explicaciones, sin prefijos como "Traducción:".',
         'voice_profiles' => [
             ['value' => 'marin', 'label' => 'Marin', 'gender' => 'female', 'voice_id' => env('ELEVENLABS_VOICE_ID_MARIN', env('ELEVENLABS_VOICE_ID_FEMALE'))],

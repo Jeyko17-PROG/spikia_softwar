@@ -28,6 +28,7 @@ class Sesion extends Model
         'avatar_character',
         'avatar_video_url',
         'slug',
+        'short_code',
         'glosario_id',
         'idioma_activo',
         'demo_expires_at',
@@ -84,6 +85,31 @@ class Sesion extends Model
     public function glosario()
     {
         return $this->belongsTo(Glosario::class, 'glosario_id');
+    }
+
+    // Codigo corto tipo "7K9-QX2" para identificar la sesion a simple vista (QR, fallback
+    // manual si la camara no enfoca). Sin 0/O/1/I/L: se confunden al transcribir a mano.
+    public static function generateUniqueShortCode(): string
+    {
+        $alphabet = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
+
+        do {
+            $code = '';
+            for ($i = 0; $i < 6; $i++) {
+                $code .= $alphabet[random_int(0, strlen($alphabet) - 1)];
+            }
+        } while (static::withTrashed()->where('short_code', $code)->exists());
+
+        return $code;
+    }
+
+    public function getShortCodeFormattedAttribute(): ?string
+    {
+        if (! $this->short_code) {
+            return null;
+        }
+
+        return substr($this->short_code, 0, 3) . '-' . substr($this->short_code, 3);
     }
 
     public function transcripciones()

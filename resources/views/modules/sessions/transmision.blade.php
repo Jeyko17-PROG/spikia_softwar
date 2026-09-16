@@ -69,22 +69,39 @@
         @endforeach
     </div>
 
-    <main class="relative z-10 flex-1 p-6 flex flex-col justify-center items-center pb-12 overflow-hidden text-center">
-        <div id="subtitles-container" class="space-y-6 flex flex-col items-center w-full max-w-2xl mx-auto">
-            <p id="placeholder" class="text-zinc-600 font-light italic text-lg animate-pulse tracking-wide">Selecciona tu idioma arriba...</p>
+    <div class="relative z-10 flex items-center justify-center gap-2 border-b border-white/5 bg-zinc-950/40 px-4 py-2">
+        <span class="text-[9px] font-black uppercase tracking-[0.2em] text-zinc-600">Tamaño</span>
+        <button type="button" data-subtitle-size="small" aria-label="Subtítulos pequeños" class="subtitle-size-btn rounded-lg border border-white/10 px-3 py-1 text-xs font-black text-zinc-400 transition-colors hover:border-cyan-400/50 hover:text-cyan-200">A-</button>
+        <button type="button" data-subtitle-size="medium" aria-label="Subtítulos medianos" class="subtitle-size-btn rounded-lg border border-cyan-400/50 bg-cyan-400/10 px-3 py-1 text-xs font-black text-cyan-200 transition-colors">A</button>
+        <button type="button" data-subtitle-size="large" aria-label="Subtítulos grandes" class="subtitle-size-btn rounded-lg border border-white/10 px-3 py-1 text-sm font-black text-zinc-400 transition-colors hover:border-cyan-400/50 hover:text-cyan-200">A+</button>
+    </div>
+
+    <main class="relative z-10 flex-1 px-4 pb-16 pt-6 flex flex-col justify-center items-center overflow-hidden text-center">
+        <div id="subtitles-container" class="flex w-full max-w-3xl items-center justify-center min-h-[72px]">
+            <p id="placeholder" class="text-zinc-600 font-light italic text-base sm:text-lg animate-pulse tracking-wide">Selecciona tu idioma arriba...</p>
         </div>
     </main>
 
+    <div class="fixed bottom-8 left-8 z-50">
+        <button id="keep-screen-on-btn" type="button" class="flex items-center justify-start gap-2 rounded-full border border-zinc-700/70 bg-zinc-950/90 px-3.5 py-2 text-[10px] font-black uppercase tracking-[0.18em] text-zinc-200 shadow-[0_0_20px_rgba(255,255,255,0.05)] transition-all duration-200 active:scale-95 min-w-[182px]">
+            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M9.75 17h4.5M7 9.5A5 5 0 0117 9.5v5.5a2 2 0 01-2 2H9a2 2 0 01-2-2V9.5zM9.5 4.5h5" />
+            </svg>
+            <span>Pantalla apagada</span>
+        </button>
+    </div>
+
     <div class="fixed bottom-8 right-8 z-50">
-        <button id="toggle-audio-btn" class="flex items-center justify-center w-16 h-16 rounded-full bg-zinc-900 border border-white/10 shadow-[0_0_30px_rgba(0,0,0,0.8)] transition-all active:scale-90 overflow-hidden group">
-            <div id="audio-btn-bg" class="absolute inset-0 bg-neonBlue/20 opacity-0 transition-opacity"></div>
-            <svg id="icon-audio-on" xmlns="http://www.w3.org/2000/svg" class="h-7 w-7 text-neonBlue hidden" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <button id="toggle-audio-btn" type="button" aria-label="Activar volumen" class="relative flex items-center justify-center gap-2 rounded-full bg-zinc-900 border border-white/10 px-4 py-3 text-[10px] font-black uppercase tracking-[0.16em] text-zinc-200 shadow-[0_0_30px_rgba(0,0,0,0.8)] transition-all active:scale-90 overflow-hidden group">
+            <div id="audio-btn-bg" class="absolute inset-0 rounded-full bg-neonBlue/20 opacity-0 transition-opacity"></div>
+            <svg id="icon-audio-on" xmlns="http://www.w3.org/2000/svg" class="relative h-6 w-6 text-neonBlue hidden" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.536 8.464a5 5 0 010 7.072m2.828-9.9a9 9 0 010 12.728M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" />
             </svg>
-            <svg id="icon-audio-off" xmlns="http://www.w3.org/2000/svg" class="h-7 w-7 text-zinc-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <svg id="icon-audio-off" xmlns="http://www.w3.org/2000/svg" class="relative h-6 w-6 text-zinc-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" />
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2" />
             </svg>
+            <span id="audio-btn-label" class="relative whitespace-nowrap">Activar volumen</span>
         </button>
     </div>
 

@@ -9,7 +9,10 @@ use App\Models\Traduccion;
 use App\Models\Transcripcion;
 use App\Events\TranscripcionCreada;
 use App\Services\OpenAITranslationService;
+use App\Services\OpenAiRealtimeTokenService;
+use App\Services\RealtimeBenchmarkMetrics;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
@@ -18,7 +21,10 @@ use Stichoza\GoogleTranslate\GoogleTranslate;
 
 class TraduccionController extends Controller
 {
-    public function __construct(private OpenAITranslationService $openai) {}
+    public function __construct(
+        private OpenAITranslationService $openai,
+        private OpenAiRealtimeTokenService $realtimeTokens,
+    ) {}
 
     public function store(Request $request)
     {
@@ -169,6 +175,219 @@ class TraduccionController extends Controller
             'success' => true,
             'translations' => $results,
         ]);
+    }
+
+    /**
+     * PoC/benchmark (ver informe "reduccion de delay a 1-2s"): el navegador YA tradujo el
+     * texto con OpenAI Realtime (ver realtimeToken() + resources/js/realtime-translate-poc.js)
+     * - este endpoint no llama a ningun motor de traduccion, solo reusa el MISMO camino de
+     * persistencia/relay/broadcast que storeBatch() para que el oyente reciba el resultado
+     * exactamente igual que hoy, y registra los timestamps de cada etapa para medir el
+     * delay real end-to-end (ver comando spikia:realtime-benchmark:report).
+     */
+    public function storeRealtimeBenchmark(Request $request)
+    {
+        $data = $request->validate([
+            'sesion_id' => ['required', 'integer'],
+            'texto_original' => ['required', 'string'],
+            'texto_traducido' => ['required', 'string'],
+            'idioma' => ['required', 'string', 'max:10'],
+            'variante' => ['nullable', 'string', 'max:10'],
+            // 'text' (Web Speech API -> Realtime texto) | 'audio' (brazo A: audio ->
+            // gpt-realtime-2.1 con VAD) | 'translate_dedicated' (brazo B: audio ->
+            // gpt-realtime-translate, streaming continuo). Solo para etiquetar el reporte.
+            'arm' => ['nullable', 'string', 'in:text,audio,translate_dedicated'],
+            // Timestamps del navegador, epoch ms (Date.now()). t_speech_start: brazo texto
+            // = primer interim (proxy); brazo audio = evento real
+            // input_audio_buffer.speech_started del VAD; brazo translate_dedicated = primer
+            // delta observado (proxy - este modelo no expone VAD, ver informe). Si no
+            // llega, se usa t_stt_final.
+            't_speech_start' => ['nullable', 'numeric'],
+            't_stt_final' => ['required', 'numeric'],
+            't_realtime_sent' => ['required', 'numeric'],
+            't_realtime_received' => ['required', 'numeric'],
+            // Primer resultado parcial de TRADUCCION (delta), para medir "first result
+            // latency" por separado del resultado final.
+            't_first_result' => ['nullable', 'numeric'],
+            // Solo brazo B: primer delta de TRANSCRIPCION (idioma origen), distinto del
+            // primer delta de traduccion - ver informe "A vs B".
+            't_first_transcript_delta' => ['nullable', 'numeric'],
+            'timeline' => ['nullable', 'array'],
+            'publish_to_relay' => ['nullable', 'boolean'],
+        ]);
+
+        $sesion = Sesion::find($data['sesion_id']);
+
+        if (! $sesion) {
+            return response()->json(['error' => 'Sesion no encontrada'], 404);
+        }
+
+        $tServerReceived = microtime(true) * 1000;
+        $textoTraducido = trim($data['texto_traducido']);
+
+        Traduccion::create([
+            'sesion_id' => $sesion->id,
+            'texto_original' => $data['texto_original'],
+            'texto_traducido' => $textoTraducido,
+            'idioma' => $data['idioma'],
+        ]);
+
+        $relayMessage = null;
+        if (($data['publish_to_relay'] ?? true) && $textoTraducido !== '') {
+            $relayMessage = $this->publishToRelay($sesion->slug, [
+                'texto' => $textoTraducido,
+                'idioma' => strtolower(explode('-', $data['idioma'])[0] ?? $data['idioma']),
+                'variante' => $data['variante'] ?? (str_contains($data['idioma'], '-') ? $data['idioma'] : null),
+                'tipo' => 'traduccion',
+            ]);
+            $this->broadcastRelayMessage($sesion, $relayMessage);
+        }
+
+        $tSpeechStart = (float) ($data['t_speech_start'] ?? $data['t_stt_final']);
+        $tSttFinal = (float) $data['t_stt_final'];
+        $tRealtimeSent = (float) $data['t_realtime_sent'];
+        $tRealtimeReceived = (float) $data['t_realtime_received'];
+        $tFirstResult = isset($data['t_first_result']) ? (float) $data['t_first_result'] : null;
+        $tFirstTranscriptDelta = isset($data['t_first_transcript_delta']) ? (float) $data['t_first_transcript_delta'] : null;
+        $timeline = is_array($data['timeline'] ?? null) ? $data['timeline'] : [];
+        $arm = (string) ($data['arm'] ?? 'text');
+        $textoOriginal = $data['texto_original'];
+        $idioma = $data['idioma'];
+        $sesionId = $sesion->id;
+
+        // El push real a Pusher/Echo se dispara DESPUES de responder (app()->terminating,
+        // ver broadcastRelayMessage) - se registra el benchmark aqui mismo para que
+        // "ms_server_to_pusher" refleje el momento real del push, no cuando este metodo
+        // simplemente termina de ejecutar.
+        app()->terminating(function () use ($sesionId, $arm, $idioma, $textoOriginal, $tSpeechStart, $tSttFinal, $tRealtimeSent, $tRealtimeReceived, $tFirstResult, $tFirstTranscriptDelta, $tServerReceived, $timeline) {
+            $tRelayPublished = microtime(true) * 1000;
+            $metrics = RealtimeBenchmarkMetrics::fromTimeline($timeline);
+
+            Log::info('spikia.realtime_benchmark', [
+                'sesion_id' => $sesionId,
+                'arm' => $arm,
+                'idioma' => $idioma,
+                'texto' => Str::limit($textoOriginal, 80),
+                'ms_speech_to_stt_final' => round($tSttFinal - $tSpeechStart, 1),
+                'ms_stt_to_realtime_sent' => round($tRealtimeSent - $tSttFinal, 1),
+                'ms_realtime_translate' => round($tRealtimeReceived - $tRealtimeSent, 1),
+                'ms_network_to_server' => round($tServerReceived - $tRealtimeReceived, 1),
+                'ms_server_to_pusher' => round($tRelayPublished - $tServerReceived, 1),
+                'ms_total_speech_to_pusher' => round($tRelayPublished - $tSpeechStart, 1),
+                // "First result latency": lo que pediste medir especialmente - cuanto tarda
+                // en verse el PRIMER fragmento traducido, no la frase completa.
+                'ms_speech_to_first_result' => $tFirstResult !== null ? round($tFirstResult - $tSpeechStart, 1) : null,
+                'ms_first_to_final_result' => $tFirstResult !== null ? round($tRealtimeReceived - $tFirstResult, 1) : null,
+                // Solo brazo B: primer delta de TRANSCRIPCION (idioma origen).
+                'ms_speech_to_first_transcript' => $tFirstTranscriptDelta !== null ? round($tFirstTranscriptDelta - $tSpeechStart, 1) : null,
+                'timeline' => $timeline,
+                'metrics' => $metrics,
+            ]);
+        });
+
+        return response()->json([
+            'success' => true,
+            'traduccion' => $textoTraducido,
+            'message' => $relayMessage,
+        ]);
+    }
+
+    /**
+     * PoC/benchmark: emite un token efimero de OpenAI Realtime para que master.js abra UNA
+     * conexion WebSocket directa que se mantiene viva durante TODA la sesion (requisito:
+     * no abrir/cerrar una conexion por frase). El PoC solo cubre el idioma configurado en
+     * spikia.realtime_translation.poc_target_language (hoy 'en').
+     */
+    public function realtimeToken(Request $request)
+    {
+        $data = $request->validate([
+            'sesion_id' => ['required', 'integer'],
+            'idioma' => ['required', 'string', 'max:10'],
+            // 'text' (default) | 'audio' (brazo A: gpt-realtime-2.1 + VAD) |
+            // 'translate_dedicated' (brazo B: gpt-realtime-translate, streaming continuo).
+            'mode' => ['nullable', 'string', 'in:text,audio,translate_dedicated'],
+        ]);
+
+        $mode = (string) ($data['mode'] ?? 'text');
+
+        // Brazos 'text' y 'translate_dedicated' siguen siendo solo PoC/benchmark, acotados
+        // al idioma configurado en poc_target_language. El brazo 'audio' (Audio+VAD) ya es
+        // el motor de produccion (ver config/spikia.php) y cubre CUALQUIER idioma de la
+        // sesion: master.js abre una conexion Realtime por idioma destino.
+        if ($mode !== 'audio') {
+            $pocLanguage = (string) config('spikia.realtime_translation.poc_target_language', 'en');
+            if ($data['idioma'] !== $pocLanguage) {
+                return response()->json([
+                    'success' => false,
+                    'message' => "El PoC de Realtime solo cubre '{$pocLanguage}' por ahora.",
+                ], 422);
+            }
+        }
+
+        $sesion = Sesion::where('id', $data['sesion_id'])
+            ->where('user_id', Auth::id())
+            ->first();
+
+        if (! $sesion) {
+            return response()->json(['success' => false, 'message' => 'Sesion no encontrada'], 404);
+        }
+
+        if ($mode === 'translate_dedicated') {
+            // Brazo B: este modelo no acepta instructions/prompt - no se construye.
+            $result = $this->realtimeTokens->mintClientSecretForDedicatedTranslation($data['idioma']);
+        } else {
+            $instructions = $this->buildRealtimeInstructions($sesion, $data['idioma']);
+            $result = $mode === 'audio'
+                ? $this->realtimeTokens->mintClientSecretForAudio($instructions)
+                : $this->realtimeTokens->mintClientSecret($instructions);
+        }
+
+        return response()->json($result, $result['success'] ? 200 : 502);
+    }
+
+    /**
+     * Instrucciones para la sesion Realtime: mismo prompt maestro + glosario que usa hoy
+     * translateBatch(), formateadas directo aqui (sin tocar OpenAITranslationService, cuyos
+     * metodos de formato de glosario son privados) - simplificacion aceptada para el PoC,
+     * documentada en el informe de resultados.
+     */
+    private function buildRealtimeInstructions(Sesion $sesion, string $targetLanguage): string
+    {
+        $settings = $this->resolveOpenAiSettings($sesion);
+        [$glossaryTerms, $glossaryPairs] = $this->resolveGlossary($sesion);
+
+        $prompt = $settings['prompt'] !== '' ? $settings['prompt'] : (string) config(
+            'spikia.translation_simultaneous.master_translation_prompt',
+            'Eres un traductor simultaneo. Traduce TODO el texto recibido de forma literal y completa.'
+        );
+
+        $instructions = $prompt
+            . "\n\nIdioma de salida: {$targetLanguage}. Traduce cada mensaje del usuario a este idioma."
+            . "\n- Responde SOLO con la traduccion, sin prefijos ni explicaciones."
+            . "\n- Cada mensaje del usuario es una frase independiente, no continues una conversacion previa.";
+
+        if (! empty($glossaryPairs)) {
+            $lines = [];
+            foreach ($glossaryPairs as $pair) {
+                $src = trim((string) ($pair['source'] ?? ''));
+                $tgt = trim((string) ($pair['target'] ?? ''));
+                if ($src !== '' && $tgt !== '') {
+                    $lines[] = "{$src}={$tgt}";
+                }
+            }
+            if ($lines) {
+                $instructions .= "\n\nPairs: " . implode(' | ', $lines);
+            }
+        }
+
+        if (! empty($glossaryTerms)) {
+            $clean = array_slice(array_values(array_unique(array_filter($glossaryTerms, fn ($t) => is_string($t) && trim($t) !== ''))), 0, 80);
+            if ($clean) {
+                $instructions .= "\n\nGlossary (preserve proper nouns, translate medical terms): " . implode(', ', $clean);
+            }
+        }
+
+        return $instructions;
     }
 
     /**

@@ -64,7 +64,12 @@ class SesionController extends Controller
         ];
 
         $qrSvgs = $sesiones->getCollection()->mapWithKeys(function (Sesion $sesion) use ($qrCodeService) {
-            $url = SpikiaUrl::public(route('sesion.transmision', ['slug' => $sesion->slug]));
+            if (! $sesion->short_code) {
+                $sesion->short_code = Sesion::generateUniqueShortCode();
+                $sesion->saveQuietly();
+            }
+
+            $url = SpikiaUrl::public(route('sesion.short', ['code' => $sesion->short_code]));
 
             return [$sesion->id => $qrCodeService->transmissionSvg($sesion->slug, $url)];
         })->all();
@@ -133,6 +138,7 @@ class SesionController extends Controller
             $candidate = $baseSlug . '-' . Str::lower(Str::random(6));
         } while (Sesion::withTrashed()->where('slug', $candidate)->exists());
         $sesion->slug = $candidate;
+        $sesion->short_code = Sesion::generateUniqueShortCode();
         $sesion->save();
         $this->recordSessionUsage($sesion, 'session_created');
 
@@ -277,7 +283,21 @@ class SesionController extends Controller
             ->firstOrFail();
         $this->recordSessionUsage($sesion, 'master_opened');
 
+        if (! $sesion->short_code) {
+            $sesion->short_code = Sesion::generateUniqueShortCode();
+            $sesion->saveQuietly();
+        }
+
         return view('modules.sessions.master', compact('sesion'));
+    }
+
+    public function shortCode(string $code)
+    {
+        $normalized = Str::upper(preg_replace('/[^A-Za-z0-9]/', '', $code));
+
+        $sesion = Sesion::where('short_code', $normalized)->firstOrFail();
+
+        return redirect()->route('sesion.transmision', ['slug' => $sesion->slug]);
     }
 
     public function transmision($slug)
@@ -559,10 +579,18 @@ class SesionController extends Controller
                 'base' => $targetBase,
                 'variant' => str_contains($targetLanguage, '-') ? $targetLanguage : '',
             ];
+            $targetLanguageForApi = match ($targetBase) {
+                'en' => 'en-US',
+                'es' => str_contains($targetLanguage, '-') ? $targetLanguage : 'es-ES',
+                'pt' => 'pt-BR',
+                'it' => 'it-IT',
+                'fr' => 'fr-FR',
+                default => $targetLanguage,
+            };
             $translateItems[$targetLanguage] = [
                 'text' => $originalTranscript,
                 'from' => $inputLanguage,
-                'to' => $targetLanguage,
+                'to' => $targetLanguageForApi,
             ];
         }
 
@@ -575,7 +603,8 @@ class SesionController extends Controller
             : [];
 
         $audioUrls = [];
-        if (($settings['translation_mode'] ?? 'voice_to_voice') === 'voice_to_voice') {
+        if (($settings['translation_mode'] ?? 'voice_to_voice') === 'voice_to_voice'
+            && ($settings['audio_delivery_mode'] ?? 'ultra_fast') !== 'ultra_fast') {
             $synthItems = [];
             foreach ($translations as $key => $translatedText) {
                 if (! is_string($translatedText) || $translatedText === '') {
@@ -594,7 +623,20 @@ class SesionController extends Controller
 
         foreach ($targetMeta as $targetLanguage => $meta) {
             $translatedText = $translations[$targetLanguage] ?? null;
-            if (! is_string($translatedText) || $translatedText === '') {
+            if (! is_string($translatedText) || trim($translatedText) === '') {
+                continue;
+            }
+
+            // Nunca publiques el original como si fuera una traduccion. Esto ocurria
+            // cuando OpenAI y el fallback externo respondian 429 y el fallback devolvia
+            // el texto de entrada para no romper el flujo.
+            if ($meta['base'] !== $sourceBase
+                && mb_strtolower(trim($translatedText)) === mb_strtolower(trim($originalTranscript))) {
+                Log::warning('Se omitio una traduccion identica al original.', [
+                    'slug' => $slug,
+                    'target' => $targetLanguage,
+                    'text_length' => mb_strlen($originalTranscript),
+                ]);
                 continue;
             }
 

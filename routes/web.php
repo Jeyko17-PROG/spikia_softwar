@@ -17,6 +17,12 @@ use Illuminate\Support\Facades\Route;
 // --- RUTAS PÚBLICAS O SEMI-PÚBLICAS ---
 Route::get('/', fn () => view('welcome'))->name('home');
 
+// Redirect corto para QR/entrada manual (ej. "spikia.test/s/7K9QX2"): mas facil de
+// escanear/transcribir a mano que la URL larga de transmision.
+Route::get('/s/{code}', [SesionController::class, 'shortCode'])
+    ->middleware('throttle:60,1')
+    ->name('sesion.short');
+
 // Estas rutas deben ser accesibles para que el Listener no falle
 Route::get('/sesiones/{slug}/transmision', [SesionController::class, 'transmision'])->name('sesion.transmision');
 Route::get('/sesiones/{slug}/movil', [SesionController::class, 'movil'])->name('sesion.movil');
@@ -53,6 +59,11 @@ Route::post('/traducciones', [TraduccionController::class, 'store'])
 Route::post('/traducciones/batch', [TraduccionController::class, 'storeBatch'])
     ->middleware('throttle:120,1')
     ->name('traducciones.batch');
+// PoC/benchmark (ver informe "reduccion de delay a 1-2s"): el navegador ya tradujo con
+// OpenAI Realtime, esto solo persiste/publica igual que storeBatch() y registra timestamps.
+Route::post('/traducciones/realtime-benchmark', [TraduccionController::class, 'storeRealtimeBenchmark'])
+    ->middleware('throttle:120,1')
+    ->name('traducciones.realtime-benchmark');
 
 // --- RUTAS PROTEGIDAS ---
 Route::middleware(['auth', 'verified'])->group(function () {
@@ -95,6 +106,9 @@ Route::middleware(['auth', 'verified'])->group(function () {
 
     // Voz / STT externos
     Route::post('/deepgram/token', [SesionController::class, 'deepgramToken'])->name('deepgram.token');
+    // PoC/benchmark de traduccion: token efimero de OpenAI Realtime (mismo patron que
+    // deepgram/token). Ver config('spikia.realtime_translation').
+    Route::post('/traducciones/realtime-token', [TraduccionController::class, 'realtimeToken'])->name('traducciones.realtime-token');
 
     // Otros Módulos
     Route::post('/creditos/consumir', [CreditoController::class, 'consume'])->name('creditos.consume');

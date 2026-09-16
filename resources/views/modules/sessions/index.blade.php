@@ -12,8 +12,6 @@
 @section('content')
 @php
     $tsConfig = config('spikia.translation_simultaneous', []);
-    $sttModels = $tsConfig['available_stt_models'] ?? [];
-    $translationModels = $tsConfig['available_translation_models'] ?? [];
     $voices = $tsConfig['available_voices'] ?? [];
 @endphp
 <div class="min-h-screen bg-[#050505] text-white">
@@ -94,6 +92,7 @@
                         @forelse($sesiones as $s)
                             @php
                                 $urlTransmision = SpikiaUrl::public(route('sesion.transmision', ['slug' => $s->slug]));
+                                $urlCorto = $s->short_code ? SpikiaUrl::public(route('sesion.short', ['code' => $s->short_code])) : $urlTransmision;
                                 $urlTransmisionLocal = route('sesion.transmision', ['slug' => $s->slug]);
                                 $urlMasterLocal = route('sesion.master', ['slug' => $s->slug]);
                                 $urlSubtitulosLocal = route('sesion.subtitulos', ['slug' => $s->slug]);
@@ -123,6 +122,9 @@
                                         <div id="qr-wrap-{{ $s->slug }}" class="w-[190px] aspect-square rounded-[1.5rem] bg-white p-4 shadow-[0_12px_28px_rgba(0,0,0,0.20)] ring-1 ring-black/5 overflow-hidden flex items-center justify-center [&_svg]:block [&_svg]:w-full [&_svg]:h-full [&_svg]:max-w-full [&_svg]:max-h-full">
                                             {!! $qrSvg !!}
                                         </div>
+                                        @if($s->short_code)
+                                            <p class="text-lg font-black tracking-[0.15em] text-white">{{ $s->short_code_formatted }}</p>
+                                        @endif
                                         <div class="space-y-2 text-center">
                                             <a href="{{ $urlTransmisionLocal }}" target="_blank" class="block text-[9px] font-black uppercase tracking-[0.25em] text-zinc-400 hover:text-white transition">
                                                 Abrir transmisión
@@ -143,12 +145,12 @@
                                                     </a>
                                                 @endif
                                             @endif
-                                            <button type="button" onclick="downloadQrPng('{{ $s->slug }}', '{{ $urlTransmision }}')" class="block text-[9px] font-black uppercase tracking-[0.25em] text-neonBlue hover:text-white transition">
+                                            <button type="button" onclick="downloadQrPng('{{ $s->slug }}', '{{ $urlCorto }}', '{{ $s->short_code_formatted }}')" class="block text-[9px] font-black uppercase tracking-[0.25em] text-neonBlue hover:text-white transition">
                                                 Descargar ZIP
                                             </button>
                                         </div>
                                     </div>
-                                    <button type="button" onclick="copyToClipboard('{{ $urlTransmision }}')" class="mx-auto mt-3 block text-[9px] font-black uppercase tracking-[0.25em] text-zinc-500 hover:text-neonBlue transition">
+                                    <button type="button" onclick="copyToClipboard('{{ $urlCorto }}')" class="mx-auto mt-3 block text-[9px] font-black uppercase tracking-[0.25em] text-zinc-500 hover:text-neonBlue transition">
                                         Copiar enlace
                                     </button>
                                 </td>
@@ -343,22 +345,6 @@
                             </div>
                         </div>
                         <div class="grid gap-4 md:grid-cols-2">
-                            <div>
-                                <label class="block text-[10px] font-black uppercase tracking-[0.35em] text-zinc-500 mb-2">Modelo STT</label>
-                                <select name="speech_to_text_model" class="w-full rounded-2xl border border-white/10 bg-black/60 px-5 py-4 text-white outline-none focus:border-neonBlue">
-                                    @foreach($sttModels as $model)
-                                        <option value="{{ $model['value'] }}" {{ ($model['value'] ?? '') === ($tsConfig['speech_to_text_model'] ?? '') ? 'selected' : '' }}>{{ $model['label'] }}</option>
-                                    @endforeach
-                                </select>
-                            </div>
-                            <div>
-                                <label class="block text-[10px] font-black uppercase tracking-[0.35em] text-zinc-500 mb-2">Modelo de traducción</label>
-                                <select name="translation_model" class="w-full rounded-2xl border border-white/10 bg-black/60 px-5 py-4 text-white outline-none focus:border-neonBlue">
-                                    @foreach($translationModels as $model)
-                                        <option value="{{ $model['value'] }}" {{ ($model['value'] ?? '') === ($tsConfig['translation_model'] ?? '') ? 'selected' : '' }}>{{ $model['label'] }}</option>
-                                    @endforeach
-                                </select>
-                            </div>
                             <div>
                                 <label class="block text-[10px] font-black uppercase tracking-[0.35em] text-zinc-500 mb-2">Modelo de voz</label>
                                 <select name="text_to_speech_model" class="w-full rounded-2xl border border-white/10 bg-black/60 px-5 py-4 text-white outline-none focus:border-neonBlue">

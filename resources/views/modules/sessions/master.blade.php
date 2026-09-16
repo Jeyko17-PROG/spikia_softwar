@@ -50,7 +50,7 @@
             $masterLanguageLabels[$language['id']] = $language['name'];
         }
     }
-    $urlReunion = SpikiaUrl::public(route('sesion.transmision', ['slug' => $sesion->slug]));
+    $urlReunion = SpikiaUrl::public(route('sesion.short', ['code' => $sesion->short_code]));
     $glosarioRel = $sesion->glosario;
     $glossaryTerms = $glosarioRel ? $glosarioRel->getTermsList() : [];
     $isDemoSession = ! empty($sesion->demo_expires_at);
@@ -69,8 +69,11 @@
         'defaultTargets' => config('spikia.default_targets', ['en', 'pt', 'it', 'fr']),
         'brandingLogoUrl' => asset('storage/media/images/spikia-25.png'),
         'brandTitle' => 'SPIKIA',
-        'brandSubtitle' => 'Master Control',
-        'brandUrl' => SpikiaUrl::master(route('sesion.master', ['slug' => $sesion->slug])),
+        'shortCode' => $sesion->short_code_formatted,
+        // OJO: nunca poner aca la URL del panel Master (SpikiaUrl::master + sesion.master):
+        // esta branding se imprime/comparte en el QR de "Acceso de invitados", y esa URL
+        // le da control total de la sesion a quien la vea.
+        'brandUrl' => $urlReunion,
         'demoExpiresAt' => $sesion->demo_expires_at?->toIso8601String(),
         'voiceProviderDefault' => $sessionTranslation['voice_provider'] ?? 'elevenlabs',
         'voiceEndpoint' => route('voz.elevenlabs', [], false),
@@ -99,11 +102,26 @@
     $masterConfig['liveStartedAt'] = $sesion->live_started_at?->toIso8601String();
     $masterConfig['liveAccumulatedSeconds'] = (int) $sesion->live_accumulated_seconds;
     $masterConfig['hasMeetingLink'] = (bool) $sesion->zoom_link;
+
+    // PoC/benchmark (ver informe "A vs B: menor latencia real"): 'current' no agrega
+    // NINGUN request ni conexion nueva - todo el codigo de los 3 brazos queda inerte.
+    $masterConfig['translationEngine'] = config('spikia.realtime_translation.engine', 'current');
+    $masterConfig['realtimePocLanguage'] = config('spikia.realtime_translation.poc_target_language', 'en');
+    $realtimeExperimentalEngines = [
+        'realtime_experimental',
+        'realtime_audio_experimental',
+        'realtime_translate_dedicated_experimental',
+    ];
+    if (in_array($masterConfig['translationEngine'], $realtimeExperimentalEngines, true)) {
+        $masterConfig['realtimeTokenUrl'] = route('traducciones.realtime-token', [], false);
+        $masterConfig['realtimeBenchmarkUrl'] = route('traducciones.realtime-benchmark', [], false);
+        $masterConfig['realtimeSegmentGapMs'] = config('spikia.realtime_translation.segment_gap_ms', 900);
+    }
 @endphp
 
 @push('head-scripts')
 <script>
-    window.__SPIKIA_MASTER__ = @json($masterConfig);
+window.__SPIKIA_MASTER__ = @json($masterConfig);
 </script>
 @vite('resources/js/master.js')
 @endpush
@@ -266,6 +284,13 @@
             <div id="btn-bg-active" class="absolute inset-0 bg-gradient-to-br from-indigo-600/40 via-blue-500/10 to-transparent opacity-0 transition-opacity duration-700"></div>
         </button>
 
+        <button id="keep-screen-on-btn" type="button" class="mt-3 flex w-full items-center justify-start gap-2 rounded-full border border-zinc-700/70 bg-zinc-950/90 px-3.5 py-2 text-left text-[10px] font-black uppercase tracking-[0.18em] text-zinc-200 shadow-[0_0_20px_rgba(255,255,255,0.05)] transition-all duration-200 active:scale-95">
+            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M9.75 17h4.5M7 9.5A5 5 0 0117 9.5v5.5a2 2 0 01-2 2H9a2 2 0 01-2-2V9.5zM9.5 4.5h5" />
+            </svg>
+            <span>Pantalla apagada</span>
+        </button>
+
         <div class="bg-zinc-900/20 rounded-[1.5rem] border border-white/5 p-5 flex flex-col min-h-[140px]">
             <span class="text-[8px] font-black text-zinc-600 uppercase tracking-[0.2em] mb-4 text-center">Frecuencia de entrada</span>
             <div id="audio-visualizer" class="flex-1 flex items-end justify-center gap-1.5 px-1 pb-2">
@@ -338,12 +363,15 @@
 <div id="qr-modal" class="hidden fixed inset-0 z-[100] flex items-center justify-center bg-black/95 backdrop-blur-md">
     <div class="absolute inset-0" onclick="document.getElementById('qr-modal').classList.add('hidden')"></div>
     <div class="relative bg-zinc-900 border border-white/10 p-10 rounded-[3rem] text-center max-w-lg shadow-[0_0_150px_rgba(112,0,255,0.2)] backdrop-blur-xl">
+        <p class="text-[10px] font-black uppercase tracking-[0.4em] text-indigo-400 mb-1">Spikia Live</p>
         <h3 class="text-3xl font-black italic uppercase tracking-tighter mb-4 text-white">Acceso de invitados</h3>
         <div id="master-qr-wrap" class="bg-white p-4 rounded-[2rem] inline-block shadow-2xl border-[8px] border-indigo-600/10 ring-1 ring-black/5 overflow-hidden">
             {!! $masterQrSvg !!}
         </div>
-        <div class="mt-6">
-            <code class="text-indigo-400 font-bold text-[10px] bg-black/50 px-4 py-2 rounded-full border border-white/5 break-all">{{ $urlReunion }}</code>
+        <p class="mt-5 text-3xl font-black tracking-[0.2em] text-white">{{ $sesion->short_code_formatted }}</p>
+        <div class="mt-3">
+            <p class="text-[10px] font-bold text-zinc-400">Escanea el código con la cámara de tu celular, o entra a</p>
+            <code class="mt-2 inline-block text-indigo-400 font-bold text-[10px] bg-black/50 px-4 py-2 rounded-full border border-white/5 break-all">{{ $urlReunion }}</code>
             <div class="mt-6 flex flex-col gap-3">
                 <button onclick="downloadMasterQrPng()" class="px-8 py-3 bg-zinc-800 text-white hover:bg-neonBlue hover:text-black rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all">
                     Descargar ZIP

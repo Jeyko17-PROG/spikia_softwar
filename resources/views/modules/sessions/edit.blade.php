@@ -80,22 +80,6 @@
 
             <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
                 <div>
-                    <label class="label-mini">Modelo STT</label>
-                    <select name="speech_to_text_model" class="select-spikia">
-                        @foreach(($tsConfig['available_stt_models'] ?? []) as $model)
-                            <option value="{{ $model['value'] }}" {{ ($sessionTranslation['speech_to_text_model'] ?? '') === $model['value'] ? 'selected' : '' }}>{{ $model['label'] }}</option>
-                        @endforeach
-                    </select>
-                </div>
-                <div>
-                    <label class="label-mini">Modelo de Traducción</label>
-                    <select name="translation_model" class="select-spikia">
-                        @foreach(($tsConfig['available_translation_models'] ?? []) as $model)
-                            <option value="{{ $model['value'] }}" {{ ($sessionTranslation['translation_model'] ?? '') === $model['value'] ? 'selected' : '' }}>{{ $model['label'] }}</option>
-                        @endforeach
-                    </select>
-                </div>
-                <div>
                     <label class="label-mini">Modelo de Voz</label>
                     <select name="text_to_speech_model" class="select-spikia">
                         <option value="{{ $tsConfig['text_to_speech_model'] ?? 'gpt-4o-mini-tts' }}">{{ $tsConfig['text_to_speech_model'] ?? 'gpt-4o-mini-tts' }}</option>

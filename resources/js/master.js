@@ -1,5 +1,8 @@
 import { io } from 'socket.io-client';
 import { downloadBrandedQrPng } from './qr-download';
+import { createRealtimeTranslator, reportRealtimeBenchmark } from './realtime-translate-poc.js';
+import { createRealtimeAudioTranslator } from './realtime-audio-poc.js';
+import { createDedicatedTranslationTranslator, createDedicatedTranslationSegmenter } from './realtime-translate-dedicated-poc.js';
 
 (function patchFetchForNgrok() {
     if (window.__SPIKIA_FETCH_PATCHED__) return;
@@ -111,7 +114,8 @@ function downloadMasterQrPngBranded() {
         branding: {
             logoUrl: config?.brandingLogoUrl,
             title: config?.brandTitle || 'SPIKIA',
-            subtitle: config?.brandSubtitle || 'Master Control',
+            code: config?.shortCode || '',
+            subtitle: 'Escanea el código o entra a',
             url: config?.brandUrl || '',
         },
     });
@@ -134,6 +138,7 @@ if (config) {
             transcriptionBox: document.getElementById('transcription-box'),
             timerElement: document.getElementById('session-timer'),
             selectedLanguageLabel: document.getElementById('selected-language-label'),
+            keepScreenBtn: document.getElementById('keep-screen-on-btn'),
             listenerPresenceList: document.getElementById('listener-presence-list'),
             listenerPresenceCount: document.getElementById('listener-presence-count'),
             statusDot: document.getElementById('status-dot'),
@@ -174,6 +179,81 @@ if (config) {
             window.speechSynthesis.cancel();
         }
 
+        let screenWakeLock = null;
+        let keepScreenOn = false;
+
+        function updateKeepScreenUI() {
+            if (!elements.keepScreenBtn) return;
+            const active = !!keepScreenOn;
+            elements.keepScreenBtn.classList.toggle('border-emerald-400/60', active);
+            elements.keepScreenBtn.classList.toggle('bg-emerald-500/10', active);
+            elements.keepScreenBtn.classList.toggle('text-emerald-200', active);
+            elements.keepScreenBtn.classList.toggle('shadow-[0_0_25px_rgba(16,185,129,0.18)]', active);
+            elements.keepScreenBtn.classList.toggle('border-zinc-700/70', !active);
+            elements.keepScreenBtn.classList.toggle('bg-zinc-950/90', !active);
+            elements.keepScreenBtn.classList.toggle('text-zinc-200', !active);
+            const icon = active
+                ? '<svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9.75 17h4.5M7 9.5A5 5 0 0117 9.5v5.5a2 2 0 01-2 2H9a2 2 0 01-2-2V9.5zM9.5 4.5h5" /></svg>'
+                : '<svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9.75 17h4.5M7 9.5A5 5 0 0117 9.5v5.5a2 2 0 01-2 2H9a2 2 0 01-2-2V9.5zM9.5 4.5h5" /></svg>';
+            elements.keepScreenBtn.innerHTML = `${icon}<span>${active ? 'Pantalla prendida' : 'Pantalla apagada'}</span>`;
+            elements.keepScreenBtn.setAttribute('aria-pressed', active ? 'true' : 'false');
+        }
+
+        async function requestKeepScreenOn() {
+            if (!('wakeLock' in navigator) || keepScreenOn) {
+                return;
+            }
+
+            try {
+                screenWakeLock = await navigator.wakeLock.request('screen');
+                keepScreenOn = true;
+                updateKeepScreenUI();
+                screenWakeLock.addEventListener('release', () => {
+                    keepScreenOn = false;
+                    updateKeepScreenUI();
+                });
+            } catch (error) {
+                keepScreenOn = false;
+                updateKeepScreenUI();
+            }
+        }
+
+        async function releaseKeepScreenOn() {
+            if (!screenWakeLock) {
+                keepScreenOn = false;
+                updateKeepScreenUI();
+                return;
+            }
+
+            try {
+                await screenWakeLock.release();
+            } catch (error) {
+                // noop
+            } finally {
+                screenWakeLock = null;
+                keepScreenOn = false;
+                updateKeepScreenUI();
+            }
+        }
+
+        if (elements.keepScreenBtn) {
+            elements.keepScreenBtn.addEventListener('click', async () => {
+                if (!keepScreenOn) {
+                    await requestKeepScreenOn();
+                } else {
+                    await releaseKeepScreenOn();
+                }
+            });
+
+            document.addEventListener('visibilitychange', async () => {
+                if (document.visibilityState === 'visible' && keepScreenOn && !screenWakeLock) {
+                    await requestKeepScreenOn();
+                }
+            });
+        }
+
+        updateKeepScreenUI();
+
         const targetLanguages = Array.isArray(config.targetLanguages) && config.targetLanguages.length
             ? config.targetLanguages
             : (Array.isArray(config.sessionLanguages) && config.sessionLanguages.length
@@ -190,6 +270,203 @@ if (config) {
         const meetingBotStopUrl = config.meetingBotStopUrl;
         const meetingBotStatusUrl = config.meetingBotStatusUrl;
         const csrfToken = config.csrfToken;
+
+        // --- PoC/benchmark: traduccion ES->EN via OpenAI Realtime (ver informe "A vs B:
+        // menor latencia real"). Motor actual (Chat Completions / /traducciones/batch)
+        // sigue intacto para todo lo demas. Tres brazos EXCLUYENTES via .env
+        // SPIKIA_TRANSLATION_ENGINE:
+        //   'realtime_experimental'                    -> texto (Web Speech API -> Realtime texto)
+        //   'realtime_audio_experimental'               -> brazo A: audio -> gpt-realtime-2.1 + VAD
+        //   'realtime_translate_dedicated_experimental' -> brazo B: audio -> gpt-realtime-translate
+        const realtimePocLanguage = config.realtimePocLanguage || 'en';
+        const realtimeUrlsReady = !!config.realtimeTokenUrl && !!config.realtimeBenchmarkUrl;
+        const realtimeTextEngineActive = config.translationEngine === 'realtime_experimental' && realtimeUrlsReady;
+        const realtimeAudioEngineActive = config.translationEngine === 'realtime_audio_experimental' && realtimeUrlsReady;
+        const realtimeDedicatedEngineActive = config.translationEngine === 'realtime_translate_dedicated_experimental' && realtimeUrlsReady;
+
+        const realtimeTranslator = realtimeTextEngineActive ? createRealtimeTranslator({
+            realtimeTokenUrl: config.realtimeTokenUrl,
+            realtimeBenchmarkUrl: config.realtimeBenchmarkUrl,
+            csrfToken,
+            sesionId: config.sesionId,
+            realtimePocLanguage,
+        }) : null;
+
+        // Brazo A (audio+VAD, motor de produccion): estado de la frase en curso POR IDIOMA
+        // (una conexion Realtime independiente por idioma destino - ver
+        // realtime-audio-poc.js), correlacionado por los eventos del propio VAD del
+        // servidor (speech_started/delta/final) - ver setupRealtimeAudioHandlers().
+        const realtimeAudioUtterances = new Map();
+        const realtimeAudioTranslator = realtimeAudioEngineActive ? createRealtimeAudioTranslator({
+            realtimeTokenUrl: config.realtimeTokenUrl,
+            csrfToken,
+            sesionId: config.sesionId,
+        }) : null;
+
+        if (realtimeAudioTranslator) {
+            setupRealtimeAudioHandlers();
+        }
+
+        /**
+         * Correlaciona los eventos crudos de la sesion Realtime de audio en "frases" POR
+         * IDIOMA: desde que el VAD del servidor detecta inicio de habla en la conexion de
+         * ese idioma, hasta que llega response.done. El texto ORIGINAL (idioma fuente)
+         * llega aparte via conversation.item.input_audio_transcription.completed y puede
+         * llegar antes o despues del resultado traducido - se guarda el que llegue primero.
+         */
+        function setupRealtimeAudioHandlers() {
+            realtimeAudioTranslator.setEventHandler((eventName, payload, ts, lang) => {
+                if (eventName === 'speech_started') {
+                    realtimeAudioUtterances.set(lang, { speechStartedAt: ts, firstResultAt: null, sourceText: '', timeline: [] });
+                } else if (eventName === 'delta') {
+                    // Solo actualiza el status de UI con el primer delta - NO se emite nada
+                    // por socket aca. El final (response.done) suele llegar decenas de ms
+                    // despues del primer delta (ver benchmark), asi que emitir tambien un
+                    // "adelanto" no gana latencia perceptible y causaba que la voz del
+                    // oyente sonara DOS VECES por frase (una vez con el parcial, otra con
+                    // el texto final completo).
+                    const utterance = realtimeAudioUtterances.get(lang);
+                    if (utterance && !utterance.firstResultAt) {
+                        utterance.firstResultAt = ts;
+                        if (state.isLive) setStatus('TRADUCIENDO (REALTIME)');
+                    }
+                } else if (eventName === 'source_transcript') {
+                    const utterance = realtimeAudioUtterances.get(lang);
+                    if (utterance) utterance.sourceText = payload.text || '';
+                } else if (eventName === 'final') {
+                    const utterance = realtimeAudioUtterances.get(lang);
+                    realtimeAudioUtterances.delete(lang);
+                    if (!utterance || !payload.text) return;
+                    utterance.timeline = payload.timeline || utterance.timeline || [];
+                    handleRealtimeAudioFinal(utterance, payload.text, ts, lang);
+                } else if (eventName === 'error') {
+                    console.warn(`Realtime (audio) error [${lang}]:`, payload);
+                }
+            });
+        }
+
+        /**
+         * Reporta una frase completa del brazo de audio (para el idioma `lang`) al mismo
+         * camino de persistencia/relay/broadcast que el motor actual, con los 3 timestamps
+         * clave (inicio de habla real, primer resultado, resultado final) para el benchmark.
+         */
+        async function handleRealtimeAudioFinal(utterance, translatedText, finishedAt, lang) {
+            const rLang = lang.split('-')[0];
+            const rVar = lang.includes('-') ? lang : '';
+            const originalText = utterance.sourceText || '(sin transcript de origen)';
+
+            const result = await reportRealtimeBenchmark({
+                realtimeBenchmarkUrl: config.realtimeBenchmarkUrl,
+                csrfToken,
+            }, {
+                sesion_id: config.sesionId,
+                texto_original: originalText,
+                texto_traducido: translatedText,
+                idioma: lang,
+                variante: rVar,
+                arm: 'audio',
+                t_speech_start: utterance.speechStartedAt,
+                t_stt_final: utterance.speechStartedAt,
+                t_realtime_sent: utterance.speechStartedAt,
+                t_realtime_received: finishedAt,
+                t_first_result: utterance.firstResultAt,
+                timeline: Array.isArray(utterance.timeline) ? utterance.timeline : [],
+            });
+
+            guardarTranscripcion(translatedText, lang);
+            emitSocketMessage({
+                id: result.message?.id || crypto.randomUUID(),
+                texto: translatedText,
+                idioma: rLang,
+                variante: rVar,
+                genero: state.gender,
+                tipo: 'traduccion',
+                available_at: result.message?.available_at || Math.floor(utterance.speechStartedAt / 1000),
+                published_at: result.message?.published_at || Math.floor(Date.now() / 1000),
+            });
+        }
+
+        // Brazo B (gpt-realtime-translate, streaming continuo): la propia heuristica de
+        // segmentacion (ver realtime-translate-dedicated-poc.js) decide cuando una "frase"
+        // termino - SOLO para poder medir el benchmark, no cambia el comportamiento real.
+        const realtimeDedicatedTranslator = realtimeDedicatedEngineActive ? createDedicatedTranslationTranslator({
+            realtimeTokenUrl: config.realtimeTokenUrl,
+            csrfToken,
+            sesionId: config.sesionId,
+            realtimePocLanguage,
+        }) : null;
+        const realtimeSegmentGapMs = Number(config.realtimeSegmentGapMs) || 900;
+        const realtimeDedicatedSegmenter = realtimeDedicatedTranslator
+            ? createDedicatedTranslationSegmenter(realtimeSegmentGapMs, (eventName, segment, ts) => {
+                if (eventName === 'first_translation_delta') {
+                    if (state.isLive) setStatus('TRADUCIENDO (REALTIME B)');
+                    return;
+                }
+                if (eventName === 'end') {
+                    handleRealtimeDedicatedFinal(segment, ts);
+                }
+            })
+            : null;
+
+        if (realtimeDedicatedTranslator) {
+            realtimeDedicatedTranslator.setEventHandler((eventName, text, ts) => {
+                if (eventName === 'transcript_delta') {
+                    realtimeDedicatedSegmenter.onTranscriptDelta(text, ts);
+                } else if (eventName === 'translation_delta') {
+                    realtimeDedicatedSegmenter.onTranslationDelta(text, ts);
+                } else if (eventName === 'error') {
+                    console.warn('PoC Realtime (brazo B) error:', text);
+                }
+            });
+        }
+
+        /**
+         * Reporta un segmento (heuristica propia) del brazo B al mismo camino de
+         * persistencia/relay/broadcast que el motor actual, con los 4 timestamps pedidos:
+         * inicio (proxy, primer delta observado), primer delta de transcripcion, primer
+         * delta de traduccion, y fin de segmento (heuristica de gap de silencio).
+         */
+        async function handleRealtimeDedicatedFinal(segment, finishedAt) {
+            const lang = realtimePocLanguage;
+            const rLang = lang.split('-')[0];
+            const rVar = lang.includes('-') ? lang : '';
+            const translatedText = segment.outputText.trim();
+            const originalText = segment.inputText.trim() || '(sin transcript de origen)';
+
+            const result = await reportRealtimeBenchmark({
+                realtimeBenchmarkUrl: config.realtimeBenchmarkUrl,
+                csrfToken,
+            }, {
+                sesion_id: config.sesionId,
+                texto_original: originalText,
+                texto_traducido: translatedText,
+                idioma: lang,
+                variante: rVar,
+                arm: 'translate_dedicated',
+                // t_speech_start es una APROXIMACION en este brazo (primer delta
+                // observado): gpt-realtime-translate no expone VAD, no hay una señal real
+                // de "inicio de audio" - ver limitacion documentada en el informe.
+                t_speech_start: segment.startedAt,
+                t_stt_final: finishedAt,
+                t_realtime_sent: segment.startedAt,
+                t_realtime_received: finishedAt,
+                t_first_result: segment.firstTranslationDeltaAt,
+                t_first_transcript_delta: segment.firstTranscriptDeltaAt,
+            });
+
+            guardarTranscripcion(translatedText, lang);
+            emitSocketMessage({
+                id: result.message?.id || crypto.randomUUID(),
+                texto: translatedText,
+                idioma: rLang,
+                variante: rVar,
+                genero: state.gender,
+                tipo: 'traduccion',
+                available_at: result.message?.available_at || Math.floor(segment.startedAt / 1000),
+                published_at: result.message?.published_at || Math.floor(Date.now() / 1000),
+            });
+        }
+
         const availableVoiceProfiles = normalizeVoiceProfiles(config.availableVoices || []);
         let currentVoice = config.translationSettings?.voice || 'marin';
         const socket = config.socketUrl ? io(config.socketUrl, {
@@ -283,6 +560,10 @@ if (config) {
             lastInterimTranslationText: '',
             lastInterimTranslationAt: 0,
             cooldownUntil: 0,
+            // PoC/benchmark Realtime: timestamp (Date.now()) del primer interim de la
+            // frase en curso, usado como proxy de "inicio de habla" para medir el delay
+            // completo. Se resetea despues de publicar cada frase final.
+            utteranceStartedAt: 0,
         };
 
         // Cronometro persistente: el acumulado y el inicio del segmento actual viven en el
@@ -358,6 +639,9 @@ if (config) {
         function stopLiveSession() {
             state.isLive = false;
             state.isRecognitionStarting = false;
+            if (realtimeTranslator) realtimeTranslator.close();
+            if (realtimeAudioTranslator) realtimeAudioTranslator.close();
+            if (realtimeDedicatedTranslator) realtimeDedicatedTranslator.close();
             sendInterimPreview('');
             if (interimPublishTimer) {
                 clearTimeout(interimPublishTimer);
@@ -1283,11 +1567,11 @@ if (config) {
             }
         }
 
-        async function enviarTraduccionesFallback(texto, availableAt) {
+        async function enviarTraduccionesFallback(texto, availableAt, speechStartedAt) {
             const idiomaOriginal = state.langBase;
             const varianteOriginal = state.lang;
             const originalId = crypto.randomUUID();
-            const targetList = getRealtimeTargetLanguages()
+            let targetList = getRealtimeTargetLanguages()
                 .filter((lang) => String(lang).toLowerCase() !== String(state.lang).toLowerCase());
 
             publicarMensaje(texto, idiomaOriginal, varianteOriginal, 'original', originalId);
@@ -1302,6 +1586,28 @@ if (config) {
                 available_at: availableAt,
                 published_at: Math.floor(Date.now() / 1000),
             });
+
+            // PoC/benchmark Realtime: si esta activo y sano, el idioma del PoC se traduce
+            // por Realtime en paralelo y se saca del lote normal (para no traducirlo dos
+            // veces). Si Realtime falla para esta frase puntual, cae automaticamente al
+            // camino actual solo para ese idioma - requisito: fallback sin romper nada.
+            if (realtimeTranslator && realtimeTranslator.isHealthy() && targetList.includes(realtimePocLanguage)) {
+                targetList = targetList.filter((lang) => lang !== realtimePocLanguage);
+                handleRealtimeTranslation(texto, realtimePocLanguage, speechStartedAt, availableAt)
+                    .catch((error) => {
+                        console.warn('PoC Realtime fallo para esta frase, usando el motor actual como fallback:', error);
+                        translateSingleViaBatchFallback(texto, realtimePocLanguage, availableAt);
+                    });
+            }
+
+            // Brazo A (audio+VAD): los idiomas con conexion Realtime sana ya se traducen en
+            // paralelo por su propia via (ver setupRealtimeAudioHandlers, disparado por el
+            // VAD del servidor sobre el audio crudo, no por este texto). Se sacan del lote
+            // clasico para no traducir dos veces la misma frase. Los que no tienen conexion
+            // sana (aun conectando, o fallo) quedan en el lote clasico como fallback.
+            if (realtimeAudioTranslator) {
+                targetList = targetList.filter((lang) => !realtimeAudioTranslator.isHealthy(lang));
+            }
 
             if (!targetList.length) {
                 return;
@@ -1370,6 +1676,85 @@ if (config) {
             }
         }
 
+        /**
+         * PoC/benchmark Realtime: traduce UNA frase por la conexion Realtime ya abierta,
+         * reporta el resultado + timestamps de cada etapa al mismo camino de
+         * persistencia/relay/broadcast que usa el motor actual, y publica por Socket.IO
+         * igual que la rama normal (ver informe "reduccion de delay a 1-2s").
+         */
+        async function handleRealtimeTranslation(texto, lang, speechStartedAt, sttFinalAt) {
+            const tRealtimeSent = Date.now();
+            const translated = await realtimeTranslator.translate(texto);
+            const tRealtimeReceived = Date.now();
+
+            const rLang = lang.split('-')[0];
+            const rVar = lang.includes('-') ? lang : '';
+            const translationId = crypto.randomUUID();
+
+            const result = await reportRealtimeBenchmark({
+                realtimeBenchmarkUrl: config.realtimeBenchmarkUrl,
+                csrfToken,
+            }, {
+                sesion_id: config.sesionId,
+                texto_original: texto,
+                texto_traducido: translated,
+                idioma: lang,
+                variante: rVar,
+                t_speech_start: speechStartedAt,
+                t_stt_final: sttFinalAt,
+                t_realtime_sent: tRealtimeSent,
+                t_realtime_received: tRealtimeReceived,
+            });
+
+            guardarTranscripcion(translated, lang);
+            emitSocketMessage({
+                id: result.message?.id || translationId,
+                texto: translated,
+                idioma: rLang,
+                variante: rVar,
+                genero: state.gender,
+                tipo: 'traduccion',
+                available_at: result.message?.available_at || sttFinalAt,
+                published_at: result.message?.published_at || Math.floor(Date.now() / 1000),
+            });
+        }
+
+        /**
+         * Red de seguridad si Realtime fallo/tardo demasiado para una frase puntual:
+         * pide esa UNA traduccion por el camino /traducciones/batch de siempre, para el
+         * idioma del PoC solamente (requisito: caer al motor actual sin romper nada).
+         */
+        function translateSingleViaBatchFallback(texto, lang, availableAt) {
+            fetch('/traducciones/batch', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Accept': 'application/json',
+                    'X-CSRF-TOKEN': csrfToken,
+                },
+                body: JSON.stringify({ sesion_id: config.sesionId, texto, idiomas: [lang] }),
+            })
+                .then((res) => res.json())
+                .then((data) => {
+                    const entry = (data.translations || {})[lang];
+                    if (!entry || !entry.traduccion) return;
+                    const rLang = lang.split('-')[0];
+                    const rVar = lang.includes('-') ? lang : '';
+                    guardarTranscripcion(entry.traduccion, lang);
+                    emitSocketMessage({
+                        id: entry.message?.id || crypto.randomUUID(),
+                        texto: entry.traduccion,
+                        idioma: rLang,
+                        variante: rVar,
+                        genero: state.gender,
+                        tipo: 'traduccion',
+                        available_at: entry.message?.available_at || availableAt,
+                        published_at: entry.message?.published_at || Math.floor(Date.now() / 1000),
+                    });
+                })
+                .catch((error) => console.error('Fallback batch tambien fallo:', error));
+        }
+
         function shouldPublishInterimTranscript(text, now) {
             const words = text.split(/\s+/).filter(Boolean);
             if (words.length < 2 || text.length < 4) {
@@ -1396,6 +1781,11 @@ if (config) {
             }
 
             if (source === 'interim') {
+                // PoC/benchmark Realtime: primer interim de esta frase = proxy de "inicio
+                // de habla" para medir el delay completo (ver informe).
+                if (!state.utteranceStartedAt) {
+                    state.utteranceStartedAt = now;
+                }
                 if (state.isLive) {
                     setStatus('VOZ DETECTADA');
                     upsertInterimPreview(normalizedTranscript, state.langName);
@@ -1412,6 +1802,8 @@ if (config) {
             state.lastTranscriptAt = now;
             state.cooldownUntil = now + 250;
             const availableAt = now;
+            const speechStartedAt = state.utteranceStartedAt || now;
+            state.utteranceStartedAt = 0;
 
             upsertInterimPreview('', state.langName);
             sendInterimPreview('');
@@ -1419,7 +1811,7 @@ if (config) {
                 setStatus('FRASE DETECTADA');
                 updateUIBox(normalizedTranscript, state.langName);
             }
-            enviarTraduccionesFallback(normalizedTranscript, availableAt);
+            enviarTraduccionesFallback(normalizedTranscript, availableAt, speechStartedAt);
         }
 
         function scheduleInterimTranslation(rawText) {
@@ -2012,6 +2404,30 @@ if (config) {
                 const stream = useDisplay ? await getDisplayAudioStream() : await ensureMicrophoneAccess();
                 state.isLive = true;
                 state.isRecognitionStarting = false;
+
+                // PoC/benchmark Realtime: UNA sola conexion para toda la sesion, se abre
+                // aqui en paralelo (no bloquea el arranque del mic) - ver requisito de no
+                // abrir/cerrar una conexion por frase. Si falla, isHealthy() sigue en
+                // false y enviarTraduccionesFallback() cae al motor actual sin avisar.
+                if (realtimeTranslator) {
+                    realtimeTranslator.connect().catch((error) => {
+                        console.warn('PoC Realtime: no se pudo conectar, se usara el motor actual como fallback.', error);
+                    });
+                }
+                // Brazo A (audio+VAD): reusa el MISMO stream del microfono, sin pedir un
+                // segundo permiso. Abre una conexion por CADA idioma destino de la sesion.
+                // Limitado a modo microfono (no captura de pestaña).
+                if (realtimeAudioTranslator && !useDisplay) {
+                    realtimeAudioTranslator.connect(stream, targetLanguages).catch((error) => {
+                        console.warn('Realtime (audio): no se pudo conectar, se usara el motor actual como fallback.', error);
+                    });
+                }
+                // Brazo B: misma logica, mismo stream reusado, solo modo microfono.
+                if (realtimeDedicatedTranslator && !useDisplay) {
+                    realtimeDedicatedTranslator.connect(stream).catch((error) => {
+                        console.warn('PoC Realtime (brazo B): no se pudo conectar, se usara el motor actual como fallback.', error);
+                    });
+                }
                 setStatus(useDisplay ? 'AUDIO DE PESTAÑA ACTIVO' : 'MICROFONO ACTIVO');
                 startMicMeter(stream);   // medidor en vivo de la fuente elegida
 

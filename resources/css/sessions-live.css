@@ -13,3 +13,13 @@
     color: #00f3ff !important;
     background: rgba(0, 243, 255, 0.1) !important;
 }
+
+.subtitle-size-small .subtitle-text { font-size: 1rem; line-height: 1.5; }
+.subtitle-size-medium .subtitle-text { font-size: 1.5rem; line-height: 1.5; }
+.subtitle-size-large .subtitle-text { font-size: 2.25rem; line-height: 1.35; }
+
+.subtitle-size-btn.is-active {
+    border-color: rgba(34, 211, 238, 0.7);
+    background: rgba(34, 211, 238, 0.1);
+    color: #a5f3fc;
+}

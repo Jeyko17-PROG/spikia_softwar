@@ -6,7 +6,7 @@ function copyToClipboard(text) {
     });
 }
 
-async function downloadQrPng(slug, url = '') {
+async function downloadQrPng(slug, url = '', code = '') {
     const config = window.__SPIKIA_SESSIONS_INDEX__ || {};
 
     await downloadBrandedQrPng({
@@ -15,7 +15,8 @@ async function downloadQrPng(slug, url = '') {
         branding: {
             logoUrl: config.logoUrl,
             title: config.brandTitle || 'SPIKIA',
-            subtitle: config.brandSubtitle || 'Panel de sesiones',
+            code,
+            subtitle: config.brandSubtitle || (code ? 'Escanea el código o entra a' : 'Panel de sesiones'),
             url: url || config.brandUrl || '',
         },
     });
