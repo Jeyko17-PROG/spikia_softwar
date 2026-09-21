@@ -1,0 +1,42 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+    body {
+        font-family: theme('fontFamily.sans');
+        letter-spacing: 0;
+    }
+
+    h1,
+    h2,
+    h3 {
+        color: rgb(244 244 245);
+    }
+
+    button,
+    a,
+    input,
+    select,
+    textarea {
+        letter-spacing: 0;
+    }
+}
+
+@layer components {
+    .spikia-title {
+        @apply text-4xl font-black uppercase leading-none tracking-tight text-white;
+    }
+
+    .spikia-subtitle {
+        @apply text-[10px] font-black uppercase tracking-[0.3em] text-zinc-500;
+    }
+
+    .spikia-action {
+        @apply inline-flex items-center justify-center rounded-2xl px-5 py-3 text-[10px] font-black uppercase tracking-[0.25em] transition;
+    }
+
+    .spikia-page {
+        @apply mx-auto w-full max-w-[1600px] px-4 py-8 sm:px-6 lg:px-8;
+    }
+}

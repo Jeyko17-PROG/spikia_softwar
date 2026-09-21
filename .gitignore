@@ -1,0 +1,55 @@
+*.log
+.DS_Store
+.env
+.env.backup
+.env.production
+.phpactor.json
+.phpunit.result.cache
+/.fleet
+/.idea
+/.nova
+/.phpunit.cache
+/.vscode
+/.zed
+/auth.json
+/node_modules
+/public/build
+/public/hot
+/public/storage
+
+# Frontend build artifacts
+/public/build/assets
+/public/build/manifest.json
+*.vite
+vite.config.ts.timestamp*
+/storage/*.key
+/storage/pail
+/storage/framework/cache/data/*
+!/storage/framework/cache/data/.gitignore
+/storage/framework/sessions/*
+!/storage/framework/sessions/.gitignore
+/storage/framework/testing/*
+!/storage/framework/testing/.gitignore
+/storage/framework/views/*
+!/storage/framework/views/.gitignore
+
+# Backups/dumps de base de datos: nunca deben versionarse (contienen datos reales de usuarios)
+*.sql
+*.sql.gz
+storage/app/*backup*
+/vendor
+Homestead.json
+Homestead.yaml
+Thumbs.db
+
+# Binarios de tuneles (se descargan aparte, no se versionan)
+*.exe
+*.msi
+cloudflared.exe
+ngrok.exe
+
+# Stubs de autocompletado para el editor (barryvdh/laravel-ide-helper). Se regeneran con
+# `php artisan ide-helper:generate` / `ide-helper:meta`; no aportan nada en runtime.
+/_ide_helper.php
+/_ide_helper_models.php
+/.phpstorm.meta.php
