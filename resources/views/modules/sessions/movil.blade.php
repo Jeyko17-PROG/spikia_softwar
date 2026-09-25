@@ -16,6 +16,19 @@
 @vite('resources/js/mobile.js')
 @endpush
 
+@php
+    // A pedido: mismo fix que transmision.blade.php/reunion.blade.php - antes mostraba el
+    // catalogo completo de idiomas sin importar cuales eligio el presentador.
+    $sessionIdiomas = is_array($sesion->idiomas ?? null) ? $sesion->idiomas : [];
+    $listenerLanguages = array_values(array_filter(
+        config('spikia.listener_languages', []),
+        fn ($lang) => in_array($lang['id'] ?? null, $sessionIdiomas, true)
+    ));
+    if ($listenerLanguages === []) {
+        $listenerLanguages = config('spikia.listener_languages', []);
+    }
+@endphp
+
 @section('content')
 <div class="mobile-container">
     <div class="mb-4">
@@ -32,7 +45,7 @@
         <h2 style="margin-top: 0;">Selecciona tu idioma</h2>
         <p>Escoge el canal de audio para la interpretación en vivo.</p>
         <div style="display: grid; gap: 12px;">
-            @foreach(config('spikia.listener_languages', []) as $language)
+            @foreach($listenerLanguages as $language)
                 <button class="btn-lang" data-mobile-lang="{{ $language['id'] }}">
                     {{ $language['label'] }}
                     <span class="dot"></span>

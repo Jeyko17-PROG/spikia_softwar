@@ -169,9 +169,10 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 const getVoiceProvider = () => {
-    return String(window.__SPIKIA_MASTER__?.translationSettings?.voice_provider || window.__SPIKIA_MASTER__?.voiceProviderDefault || 'elevenlabs').toLowerCase() === 'elevenlabs'
-        ? 'elevenlabs'
-        : 'browser';
+    const provider = String(
+        window.__SPIKIA_MASTER__?.translationSettings?.voice_provider || window.__SPIKIA_MASTER__?.voiceProviderDefault || 'elevenlabs'
+    ).toLowerCase();
+    return provider === 'openai' ? 'openai' : 'elevenlabs';
 };
 
 const config = window.__SPIKIA_MASTER__;
@@ -513,6 +514,11 @@ if (config) {
 
         const availableVoiceProfiles = normalizeVoiceProfiles(config.availableVoices || []);
         let currentVoice = config.translationSettings?.voice || 'marin';
+        // 'elevenlabs' o 'openai' - ambos sintetizan voz real (mismo endpoint del backend,
+        // el servidor decide con cual segun este valor guardado). Antes esto quedaba
+        // hardcodeado a 'elevenlabs' en cada guardado sin importar nada mas - no habia
+        // forma de elegir OpenAI desde la UI aunque el backend ya lo soportara.
+        let currentVoiceProvider = getVoiceProvider();
         const socket = config.socketUrl ? io(config.socketUrl, {
             transports: ['websocket', 'polling'],
             reconnection: true,
@@ -1510,8 +1516,19 @@ if (config) {
         state.langName = formatLanguageLabel(state.lang);
 
         function updateVoiceProviderUI() {
+            const label = currentVoiceProvider === 'openai' ? 'OpenAI' : 'ElevenLabs';
             if (elements.voiceProviderLabel) {
-                elements.voiceProviderLabel.textContent = 'ElevenLabs';
+                elements.voiceProviderLabel.textContent = label;
+            }
+            if (elements.voiceProviderToggle) {
+                elements.voiceProviderToggle.textContent = `Cambiar a ${currentVoiceProvider === 'openai' ? 'ElevenLabs' : 'OpenAI'}`;
+            }
+            // Clonar voz es una funcion exclusiva de ElevenLabs (OpenAI no ofrece clonado de
+            // voz via API) - se oculta en vez de dejarla ahi rota/confusa cuando el
+            // proveedor activo es OpenAI.
+            const clonePanel = document.getElementById('voice-clone-panel');
+            if (clonePanel) {
+                clonePanel.classList.toggle('hidden', currentVoiceProvider === 'openai');
             }
         }
 
@@ -2925,7 +2942,7 @@ if (config) {
                 }
 
                 persistTranslationSettings({
-                    voice_provider: 'elevenlabs',
+                    voice_provider: currentVoiceProvider,
                     voice_gender_profile: state.gender,
                     voice: currentVoice,
                 }).then((ok) => {
@@ -2949,19 +2966,47 @@ if (config) {
             });
         });
 
+        if (elements.voiceProviderToggle) {
+            elements.voiceProviderToggle.addEventListener('click', async () => {
+                const previousProvider = currentVoiceProvider;
+                currentVoiceProvider = currentVoiceProvider === 'openai' ? 'elevenlabs' : 'openai';
+                updateVoiceProviderUI();
+
+                if (elements.voiceStatus) {
+                    elements.voiceStatus.textContent = 'Guardando...';
+                    elements.voiceStatus.classList.remove('text-red-400');
+                }
+
+                const ok = await persistTranslationSettings({
+                    voice_provider: currentVoiceProvider,
+                    voice_gender_profile: state.gender,
+                    voice: currentVoice,
+                });
+
+                if (!ok) {
+                    currentVoiceProvider = previousProvider;
+                    updateVoiceProviderUI();
+                    if (elements.voiceStatus) {
+                        elements.voiceStatus.textContent = 'No se pudo cambiar el proveedor de voz.';
+                        elements.voiceStatus.classList.add('text-red-400');
+                    }
+                    return;
+                }
+
+                if (elements.voiceStatus) {
+                    elements.voiceStatus.textContent = `Proveedor activo: ${currentVoiceProvider === 'openai' ? 'OpenAI' : 'ElevenLabs'}`;
+                }
+            });
+        }
+
         updateVoiceProviderUI();
         renderListenerPresence();
 
         function updateIaPanelSummary() {
-            const provider = getVoiceProvider() === 'elevenlabs' ? 'ElevenLabs' : 'Navegador';
+            const provider = currentVoiceProvider === 'openai' ? 'OpenAI' : 'ElevenLabs';
             const genderLabel = state.gender === 'male' ? 'Male' : 'Female';
             if (!elements.iaPanelSummary) return;
             elements.iaPanelSummary.textContent = `${provider} - ${genderLabel} - ${currentVoice}`;
-            return;
-            elements.iaPanelSummary.textContent = `${provider} Â· ${genderLabel} Â· ${currentVoice}`;
-            return;
-            const mode = (config.translationSettings?.translation_mode || 'voice_to_voice') === 'voice_to_voice' ? 'Voz' : 'Texto';
-            elements.iaPanelSummary.textContent = `${mode} · ${currentVoice}`;
         }
 
         function setIaPanelOpen(open) {
@@ -3260,7 +3305,7 @@ if (config) {
                     elements.voiceStatus.classList.remove('text-red-400');
                 }
                 const ok = await persistTranslationSettings({
-                    voice_provider: 'elevenlabs',
+                    voice_provider: currentVoiceProvider,
                     voice_gender_profile: state.gender,
                     voice: next,
                 });

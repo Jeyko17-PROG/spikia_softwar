@@ -95,10 +95,19 @@ return [
         // VAD/turn detection del brazo de audio (session.audio.input.turn_detection). El
         // modelo dedicado de traduccion de OpenAI NO expone esto (segmentacion interna,
         // ver informe); por eso el brazo de audio usa el modelo Realtime general, que si
-        // lo permite. semantic_vad+high = prioriza latencia baja sobre esperar frases
-        // "completas" segun el propio juicio del modelo.
+        // lo permite.
+        // OJO (medido con logs reales de spikia.realtime_benchmark, no solo en teoria):
+        // semantic_vad+high tardaba ~5000ms en decidir que la frase habia terminado (el
+        // modelo "esperando estar seguro" de que el pensamiento esta completo) - la
+        // traduccion en si, una vez que el VAD dispara, tarda menos de 1s. Ese arranque
+        // lento del VAD era LA demora real que se sentia como "lento" en Master y en el
+        // link del oyente, no la traduccion. server_vad es puramente basado en silencio
+        // (sin "juicio" semantico) y corta apenas pasan silence_duration_ms de silencio
+        // real - mucho mas predecible y rapido para interpretacion en vivo, a costa de
+        // poder cortar una pausa larga en medio de una frase (tradeoff aceptado a
+        // proposito: en este producto, rapido > perfecto).
         'vad' => [
-            'type' => env('OPENAI_REALTIME_VAD_TYPE', 'semantic_vad'), // semantic_vad | server_vad
+            'type' => env('OPENAI_REALTIME_VAD_TYPE', 'server_vad'), // semantic_vad | server_vad
             'eagerness' => env('OPENAI_REALTIME_VAD_EAGERNESS', 'high'), // low|medium|high|auto (solo semantic_vad)
             'silence_duration_ms' => (int) env('OPENAI_REALTIME_VAD_SILENCE_MS', 400), // solo server_vad
         ],

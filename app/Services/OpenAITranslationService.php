@@ -67,13 +67,24 @@ class OpenAITranslationService
      *
      * @return array{text: string, language: ?string}
      */
+    /**
+     * OJO (bug real encontrado con logs de produccion, no en teoria): 'response_format' =>
+     * 'verbose_json' -que es lo unico que devuelve el campo "language" que este metodo
+     * necesita- NO esta soportado por los modelos de transcripcion mas nuevos
+     * (gpt-4o-mini-transcribe, gpt-4o-transcribe, etc. - error real de OpenAI: "response_format
+     * 'verbose_json' is not compatible with model '...'"). Whisper-1 (el modelo clasico) SI
+     * lo soporta de forma confiable, asi que este metodo lo fuerza SIEMPRE, ignorando el
+     * $model configurado en la sesion - da igual que modelo use la transcripcion "real" que
+     * se muestra/guarda, aca solo interesa el idioma detectado (o, en el caso de
+     * handleIncomingAudioSegment, tambien el texto de whisper-1, que es igualmente valido).
+     */
     public function transcribeWithLanguageDetection(string $audioPath, string $model): array
     {
         $handle = fopen($audioPath, 'r');
 
         try {
             $response = $this->client->audio()->transcribe([
-                'model'           => $model,
+                'model'           => 'whisper-1',
                 'file'            => $handle,
                 'response_format' => 'verbose_json',
             ]);

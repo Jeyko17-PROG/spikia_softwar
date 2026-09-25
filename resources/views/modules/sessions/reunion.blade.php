@@ -24,11 +24,23 @@
             $listenerLanguageLabels[$language['id']] = $language['label'];
         }
     }
+    // A pedido: los botones de idioma antes mostraban SIEMPRE el catalogo completo, sin
+    // importar cuales eligio el presentador para esta sesion - ver mismo fix en
+    // transmision.blade.php.
+    $sessionIdiomas = is_array($sesion->idiomas ?? null) ? $sesion->idiomas : [];
+    $listenerLanguages = array_values(array_filter(
+        config('spikia.listener_languages', []),
+        fn ($lang) => in_array($lang['id'] ?? null, $sessionIdiomas, true)
+    ));
+    if ($listenerLanguages === []) {
+        $listenerLanguages = config('spikia.listener_languages', []);
+    }
+    $defaultListenerLang = $listenerLanguages[0]['id'] ?? 'es-ES';
     $listenerConfig = [
         'slug' => $sesion->slug,
         'socketUrl' => config('spikia.socket_enabled') ? (config('spikia.socket_url') ?: request()->getScheme() . '://' . request()->getHost() . ':3000') : null,
         'feedUrl' => route('sesiones.mensajes.feed', ['slug' => $sesion->slug], false),
-        'defaultLang' => 'es-ES',
+        'defaultLang' => $defaultListenerLang,
         'languageLabels' => $listenerLanguageLabels,
         'voiceProvider' => $sessionTranslation['voice_provider'] ?? 'elevenlabs',
         'voiceEndpoint' => route('voz.elevenlabs', [], false),
@@ -49,17 +61,14 @@
 <div class="flex flex-col h-screen relative">
     <div class="absolute inset-0 bg-[radial-gradient(circle_at_50%_0%,#1e1b4b,transparent)] opacity-60"></div>
 
-    <header class="relative z-10 p-5 border-b border-white/5 bg-zinc-950/80 backdrop-blur-md flex justify-between items-center shadow-xl">
-        <h2 class="text-xl font-light italic text-white">Spikia <span class="font-black not-italic text-transparent bg-clip-text bg-gradient-to-r from-spikiaPurple via-zinc-400 to-neonBlue">Listener</span></h2>
-        <div class="flex items-center gap-2">
-            <div class="hidden sm:flex items-center gap-2 bg-zinc-900 px-3 py-1.5 rounded-full border border-white/5">
-                <span class="text-[9px] font-black uppercase tracking-[0.25em] text-zinc-500">Idioma</span>
-                <span id="selected-language-label" class="text-[9px] font-black tracking-widest text-neonBlue">ESP-latAm</span>
-            </div>
-            <div class="flex items-center gap-2 bg-zinc-900 px-3 py-1.5 rounded-full border border-white/5">
-                <span id="status-dot" class="w-2 h-2 rounded-full bg-red-500 animate-pulse shadow-[0_0_8px_red]"></span>
-                <span id="status-text" class="text-[9px] font-black tracking-widest text-zinc-400 mt-0.5">CONECTANDO</span>
-            </div>
+    <header class="relative z-10 px-5 py-3 border-b border-white/5 bg-zinc-950/80 backdrop-blur-md flex items-center justify-between gap-3 shadow-xl">
+        <a href="{{ route('home') }}" class="inline-flex items-center rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-[9px] font-black uppercase tracking-[0.2em] text-zinc-300 transition hover:border-white/20 hover:text-white">
+            Salir de la reunión
+        </a>
+
+        <div class="flex items-center gap-2 rounded-full border border-cyan-400/30 bg-zinc-900 px-3 py-1.5">
+            <label for="selected-language-label" class="hidden text-[9px] font-black uppercase tracking-[0.2em] text-zinc-500 sm:inline">Idioma</label>
+            <span id="selected-language-label" class="text-[9px] font-black tracking-widest text-neonBlue">ESP-latAm</span>
         </div>
     </header>
 
@@ -67,19 +76,10 @@
         @include('modules.sessions.partials.demo-banner', ['sesion' => $sesion])
     </div>
 
-    <div class="relative z-10 px-6 pt-3">
-        <div class="inline-flex flex-wrap items-center gap-2 rounded-full border border-cyan-400/15 bg-cyan-400/5 px-4 py-2 text-[10px] font-black uppercase tracking-[0.28em] text-cyan-100">
-            <span>{{ ($sessionTranslation['translation_mode'] ?? 'voice_to_voice') === 'voice_to_voice' ? 'Modo voz a voz' : 'Modo voz a texto' }}</span>
-            <span class="text-zinc-500">/</span>
-            <span>IA {{ $sessionTranslation['translation_model'] ?? 'gpt-5.4-mini' }}</span>
-            <span class="text-zinc-500">/</span>
-            <span>Voz {{ $sessionTranslation['voice'] ?? 'marin' }}</span>
-        </div>
-    </div>
 
     <div class="relative z-10 p-4 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2 border-b border-white/5 bg-zinc-900/30 backdrop-blur-sm">
-        @foreach(config('spikia.listener_languages', []) as $language)
-            <button class="mobile-lang-btn py-3 rounded-xl text-[10px] font-black tracking-widest border border-white/5 text-zinc-500 hover:text-white bg-zinc-950 transition-all shadow-lg active:scale-95 {{ $language['id'] === 'es-ES' ? 'lang-active' : '' }}" data-lang="{{ $language['id'] }}">
+        @foreach($listenerLanguages as $language)
+            <button class="mobile-lang-btn py-3 rounded-xl text-[10px] font-black tracking-widest border border-white/5 text-zinc-500 hover:text-white bg-zinc-950 transition-all shadow-lg active:scale-95 {{ $language['id'] === $defaultListenerLang ? 'lang-active' : '' }}" data-lang="{{ $language['id'] }}">
                 {{ $language['label'] }}
             </button>
         @endforeach

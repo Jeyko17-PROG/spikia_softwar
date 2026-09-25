@@ -86,7 +86,14 @@ if (config) {
             fr: { lang: 'fr', masterLang: 'fr-FR', base: 'fr', speech: 'fr-FR', name: 'FrancÃ©s' },
         };
 
-        if (!container || !audioBtn || !statusDot || !statusText) {
+        // Antes exigia tambien statusDot/statusText - esos dos ya no existen en el HTML de
+        // varias vistas (ej. transmision.blade.php) despues del rediseño, asi que ese
+        // guard cortaba TODA la inicializacion en silencio (sin ningun error en consola):
+        // ni el tamaño de subtitulos, ni "pantalla prendida/apagada", ni el audio
+        // funcionaban, porque el codigo que los conecta a los botones ni siquiera llegaba
+        // a correr. container y audioBtn si son imprescindibles (la pagina no tiene sentido
+        // sin ellos); statusDot/statusText son opcionales, ver setOnline()/setOffline().
+        if (!container || !audioBtn) {
             return;
         }
 
@@ -96,6 +103,12 @@ if (config) {
         let screenWakeLock = null;
         let keepScreenOn = false;
         let pendingSpeechMessage = null;
+        // Cada frase nueva borra y recrea el <p class="subtitle-text"> desde cero
+        // (actualizarSubtitulos/renderInterimPreview hacen container.innerHTML = '' por
+        // cada mensaje) - sin esto, el tamaño elegido solo se aplicaba al nodo que existia
+        // EN ESE MOMENTO del click, y se perdia apenas llegaba la siguiente frase. Se
+        // guarda aca para que cualquier nodo nuevo lo pueda aplicar apenas se crea.
+        let currentSubtitleSize = localStorage.getItem('spikia_subtitle_size') || 'medium';
         const listenerClientId = (() => {
             const existing = localStorage.getItem(listenerClientIdStorageKey);
             if (existing) return existing;
@@ -191,12 +204,28 @@ if (config) {
                 .replace(/\b(\w+)(?:\s+\1\b)+/gi, '$1');
         }
 
+        // Aplica el tamaño actual a UN nodo de subtitulo puntual - se llama tanto al
+        // cambiar de tamaño (sobre el nodo que ya esta en pantalla) como apenas se crea un
+        // nodo nuevo (para que nunca "vuelva" al tamaño por defecto en la siguiente frase).
+        function applySubtitleSizeToNode(node) {
+            if (!node) return;
+            const sizeMap = { small: '1.25rem', medium: '1.875rem', large: '2.75rem' };
+            node.style.fontSize = sizeMap[currentSubtitleSize] || sizeMap.medium;
+            node.style.lineHeight = currentSubtitleSize === 'large' ? '1.3' : currentSubtitleSize === 'small' ? '1.5' : '1.4';
+        }
+
         function setSubtitleSize(size) {
             const selectedSize = ['small', 'medium', 'large'].includes(size) ? size : 'medium';
+            currentSubtitleSize = selectedSize;
             container.classList.remove('subtitle-size-small', 'subtitle-size-medium', 'subtitle-size-large');
             container.classList.add(`subtitle-size-${selectedSize}`);
+
+            applySubtitleSizeToNode(container.querySelector('.subtitle-text'));
+
             subtitleSizeButtons.forEach((button) => {
-                button.classList.toggle('is-active', button.dataset.subtitleSize === selectedSize);
+                const active = button.dataset.subtitleSize === selectedSize;
+                button.classList.toggle('is-active', active);
+                button.setAttribute('aria-pressed', active ? 'true' : 'false');
             });
             localStorage.setItem('spikia_subtitle_size', selectedSize);
         }
@@ -226,7 +255,13 @@ if (config) {
         }
 
         async function requestKeepScreenOn() {
-            if (!('wakeLock' in navigator) || keepScreenOn) {
+            if (keepScreenOn) {
+                return;
+            }
+
+            if (!('wakeLock' in navigator)) {
+                keepScreenOn = true;
+                updateKeepScreenUI();
                 return;
             }
 
@@ -341,35 +376,44 @@ if (config) {
             return notice;
         }
 
-        const AUDIO_OFF_NOTICE_MAX_MS = 3 * 1000; // 3 segundos
-        let audioOffNoticeTimer = null;
-        let audioOffNoticeSuppressed = false;
+        // A pedido: el aviso "Activá el audio..." se muestra como mucho 2 segundos y
+        // despues se oculta solo, aunque el oyente todavia no haya tocado "Activar audio" -
+        // no debe quedar tapando la pantalla indefinidamente. (Antes habia un intento de
+        // esto mismo, pero el calculo de tiempo estaba mal - comparaba "ahora" contra "ahora
+        // menos si mismo", asi que nunca llegaba a ocultarse.)
+        const AUDIO_UNLOCK_NOTICE_DURATION_MS = 2000;
+        let audioUnlockNoticeTimer = null;
+        let audioUnlockNoticeExpired = false;
 
         function renderAudioUnlockNotice() {
             const notice = ensureAudioUnlockNotice();
 
             if (audioEnabled) {
-                // El oyente SI quiere audio (solo falta desbloquearlo, ej. politica de
-                // autoplay del navegador): ese aviso es accionable, se mantiene sin limite.
-                if (audioOffNoticeTimer) {
-                    clearTimeout(audioOffNoticeTimer);
-                    audioOffNoticeTimer = null;
+                // El audio ya esta activo: se resetea todo para la proxima vez que haga
+                // falta mostrar el aviso (ej. si el oyente lo desactiva mas tarde).
+                if (audioUnlockNoticeTimer) {
+                    clearTimeout(audioUnlockNoticeTimer);
+                    audioUnlockNoticeTimer = null;
                 }
-                audioOffNoticeSuppressed = false;
+                audioUnlockNoticeExpired = false;
                 notice.classList.toggle('hidden', audioUnlocked);
                 return;
             }
 
-            // El oyente apago el audio a proposito: no lo molestamos con este aviso mas de
-            // 3 minutos - despues de eso se asume que eligio ver solo el subtitulo.
-            if (!audioOffNoticeSuppressed && !audioOffNoticeTimer) {
-                audioOffNoticeTimer = window.setTimeout(() => {
-                    audioOffNoticeTimer = null;
-                    audioOffNoticeSuppressed = true;
-                    renderAudioUnlockNotice();
-                }, AUDIO_OFF_NOTICE_MAX_MS);
+            if (audioUnlockNoticeExpired) {
+                notice.classList.add('hidden');
+                return;
             }
-            notice.classList.toggle('hidden', audioOffNoticeSuppressed);
+
+            notice.classList.remove('hidden');
+
+            if (!audioUnlockNoticeTimer) {
+                audioUnlockNoticeTimer = window.setTimeout(() => {
+                    audioUnlockNoticeTimer = null;
+                    audioUnlockNoticeExpired = true;
+                    renderAudioUnlockNotice();
+                }, AUDIO_UNLOCK_NOTICE_DURATION_MS);
+            }
         }
 
         function queuePendingSpeech(texto, lang, variante, audioUrl = '') {
@@ -423,7 +467,43 @@ if (config) {
             });
         }
 
+        // Media Session API: le dice al SO (Android/iOS/desktop) que esto es "reproduccion
+        // de medios" real, igual que una cancion o un podcast - eso es lo que hace que el
+        // audio pueda seguir sonando con la pantalla apagada/bloqueada en vez de que el
+        // navegador lo pause al mandarlo a segundo plano. Sin esto, el audio de
+        // <audio>/Audio() se trata como "ruido de una pestaña en background" y muchos
+        // navegadores moviles lo cortan apenas se apaga la pantalla.
+        let mediaSessionInitialized = false;
+        function ensureMediaSession() {
+            if (mediaSessionInitialized || !('mediaSession' in navigator)) return;
+            mediaSessionInitialized = true;
+
+            navigator.mediaSession.metadata = new MediaMetadata({
+                title: 'Traducción en vivo',
+                artist: 'Spikia',
+                album: config.slug || 'Sesión en vivo',
+            });
+
+            // Handlers vacios (no-op) a proposito: no hay play/pause/seek real que ofrecerle
+            // al SO desde este lado, pero REGISTRARLOS es lo que hace que algunos
+            // navegadores (sobre todo Android/Chrome) acepten tratar este audio como sesion
+            // de medios controlable y no lo suspendan en segundo plano.
+            const noop = () => {};
+            ['play', 'pause', 'stop', 'seekbackward', 'seekforward'].forEach((action) => {
+                try {
+                    navigator.mediaSession.setActionHandler(action, noop);
+                } catch (error) {
+                    // Accion no soportada en este navegador - se ignora, no es critico.
+                }
+            });
+        }
+
         function emitAudioState(active) {
+            if ('mediaSession' in navigator) {
+                ensureMediaSession();
+                navigator.mediaSession.playbackState = active ? 'playing' : 'paused';
+            }
+
             if (!socket) return;
 
             socket.emit('listener-audio-state', {
@@ -436,9 +516,13 @@ if (config) {
         }
 
         function getVoiceProvider() {
-            return String(config.translationSettings?.voice_provider || config.voiceProvider || 'elevenlabs').toLowerCase() === 'elevenlabs'
-                ? 'elevenlabs'
-                : 'browser';
+            // 'elevenlabs' y 'openai' van por el MISMO endpoint del backend (/voz/elevenlabs*):
+            // el servidor decide con cual de los dos sintetizar segun translation_settings de
+            // la sesion (ver SesionController::elevenlabs/elevenlabsStream) - aca solo hace
+            // falta distinguir "hay un proveedor real configurado" vs "usar la voz del
+            // navegador" (speechSynthesis, ultimo recurso sin proveedor).
+            const provider = String(config.translationSettings?.voice_provider || config.voiceProvider || 'elevenlabs').toLowerCase();
+            return provider === 'elevenlabs' || provider === 'openai' ? provider : 'browser';
         }
 
         function stopCurrentVoiceAudio() {
@@ -466,7 +550,11 @@ if (config) {
         }
 
         async function speakWithElevenLabs(texto, lang, variante) {
-            if (getVoiceProvider() !== 'elevenlabs') {
+            // El nombre de la funcion quedo de cuando ElevenLabs era el unico proveedor -
+            // hoy tambien cubre 'openai' (mismo endpoint, el backend decide con cual
+            // sintetizar). Solo se sale si el proveedor es 'browser' (sin proveedor real
+            // configurado, usar la voz del navegador en su lugar).
+            if (getVoiceProvider() === 'browser') {
                 return false;
             }
 
@@ -687,7 +775,7 @@ if (config) {
                 if (browserOk) return;
             }
 
-            const elevenLabsEnabled = getVoiceProvider() === 'elevenlabs' && config.voiceEndpoint;
+            const elevenLabsEnabled = getVoiceProvider() !== 'browser' && config.voiceEndpoint;
             if (elevenLabsEnabled) {
                 if (!audioEnabled) return;
                 const ok = await speakWithElevenLabsAwait(texto, lang, variante);
@@ -734,7 +822,7 @@ if (config) {
         }
 
         async function speakWithElevenLabsAwait(texto, lang, variante) {
-            if (getVoiceProvider() !== 'elevenlabs') return false;
+            if (getVoiceProvider() === 'browser') return false;
             const streamEndpoint = config.voiceStreamEndpoint;
             if (!streamEndpoint) return false;
 
@@ -788,6 +876,7 @@ if (config) {
             const p = document.createElement('p');
             p.className = 'subtitle-text max-w-[85vw] rounded-xl border border-white/10 bg-black/35 px-4 py-2 text-center font-medium tracking-[0.08em] text-white/95 shadow-[0_0_24px_rgba(0,0,0,0.4)] animate-subtitle-in';
             p.innerText = collapseAdjacentRepeatedWords(texto);
+            applySubtitleSizeToNode(p);
             container.appendChild(p);
         }
 
@@ -830,6 +919,7 @@ if (config) {
                 </div>
                 <p class="subtitle-text max-w-[85vw] rounded-xl border border-white/10 bg-black/35 px-4 py-2 text-center font-medium tracking-[0.08em] text-white/95 shadow-[0_0_24px_rgba(0,0,0,0.4)] animate-subtitle-in">${normalizedText}</p>
             `;
+            applySubtitleSizeToNode(wrapper.querySelector('.subtitle-text'));
             container.appendChild(wrapper);
         }
 
@@ -971,13 +1061,17 @@ if (config) {
         }
 
         function setOnline() {
-            statusDot.className = 'w-2 h-2 rounded-full bg-cyan-400 shadow-[0_0_10px_#22d3ee]';
-            statusText.innerText = 'EN LINEA';
+            // statusDot/statusText: indicador de conexion opcional - varias vistas que usan
+            // este mismo listener.js (ej. transmision.blade.php) ya no lo tienen en el HTML
+            // despues del rediseño. No deben ser obligatorios para que el resto de la
+            // pagina (tamaño de subtitulos, pantalla activa, audio) funcione.
+            if (statusDot) statusDot.className = 'w-2 h-2 rounded-full bg-cyan-400 shadow-[0_0_10px_#22d3ee]';
+            if (statusText) statusText.innerText = 'EN LINEA';
         }
 
         function setOffline() {
-            statusDot.className = 'w-2 h-2 rounded-full bg-red-500 shadow-[0_0_10px_red]';
-            statusText.innerText = 'DESCONECTADO';
+            if (statusDot) statusDot.className = 'w-2 h-2 rounded-full bg-red-500 shadow-[0_0_10px_red]';
+            if (statusText) statusText.innerText = 'DESCONECTADO';
         }
 
         function matchesLanguage(data) {

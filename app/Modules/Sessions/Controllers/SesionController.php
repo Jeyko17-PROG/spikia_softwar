@@ -101,7 +101,7 @@ class SesionController extends Controller
             'speech_to_text_model' => ['nullable', Rule::in($sttValues)],
             'translation_model' => ['nullable', Rule::in($translationValues)],
             'text_to_speech_model' => ['nullable', Rule::in([$translationConfig['text_to_speech_model'] ?? 'gpt-4o-mini-tts'])],
-            'voice_provider' => ['nullable', Rule::in(['elevenlabs'])],
+            'voice_provider' => ['nullable', Rule::in(['elevenlabs', 'openai'])],
             'voice_gender_profile' => ['nullable', Rule::in(['male', 'female'])],
             'voice' => ['nullable', Rule::in($voiceValues)],
             'audio_delivery_mode' => ['nullable', Rule::in($audioDeliveryModes)],
@@ -180,7 +180,7 @@ class SesionController extends Controller
             'speech_to_text_model' => ['nullable', Rule::in($sttValues)],
             'translation_model' => ['nullable', Rule::in($translationValues)],
             'text_to_speech_model' => ['nullable', Rule::in([$translationConfig['text_to_speech_model'] ?? 'gpt-4o-mini-tts'])],
-            'voice_provider' => ['nullable', Rule::in(['elevenlabs'])],
+            'voice_provider' => ['nullable', Rule::in(['elevenlabs', 'openai'])],
             'voice_gender_profile' => ['nullable', Rule::in(['male', 'female'])],
             'voice' => ['nullable', Rule::in($voiceValues)],
             'audio_delivery_mode' => ['nullable', Rule::in($audioDeliveryModes)],
@@ -1137,6 +1137,26 @@ class SesionController extends Controller
         $gender = $this->resolveVoiceGender(
             (string) ($data['gender'] ?? ($translationSettings['voice_gender_profile'] ?? 'female'))
         );
+
+        // Provider elegido en la sesion (ver updateTranslationSettings): 'openai' reusa la
+        // MISMA OPENAI_API_KEY que ya usa el resto de Spikia, sin necesitar una cuenta de
+        // ElevenLabs separada.
+        if (Str::lower((string) ($translationSettings['voice_provider'] ?? 'elevenlabs')) === 'openai') {
+            $audioBytes = $this->requestOpenAiTtsAudioBinary($text, $translationSettings);
+
+            if ($audioBytes === null || $audioBytes === '') {
+                return response()->json([
+                    'message' => 'OpenAI TTS no esta configurado o fallo generando el audio.',
+                ], 503);
+            }
+
+            return response($audioBytes, 200, [
+                'Content-Type' => 'audio/mpeg',
+                'Content-Disposition' => 'inline; filename="spikia-voice.mp3"',
+                'Cache-Control' => 'no-store, no-cache, must-revalidate, max-age=0',
+            ]);
+        }
+
         $audioBytes = $this->requestElevenLabsAudioBinary(
             $text,
             $translationSettings,
@@ -1188,6 +1208,18 @@ class SesionController extends Controller
         $gender = $this->resolveVoiceGender(
             (string) ($data['gender'] ?? ($translationSettings['voice_gender_profile'] ?? 'female'))
         );
+
+        if (Str::lower((string) ($translationSettings['voice_provider'] ?? 'elevenlabs')) === 'openai') {
+            return response()->stream(function () use ($text, $translationSettings) {
+                if (! $this->streamOpenAiTtsChunks($text, $translationSettings)) {
+                    Log::warning('OpenAI TTS streaming fallo.', ['voice' => $translationSettings['voice'] ?? null]);
+                }
+            }, 200, [
+                'Content-Type' => 'audio/mpeg',
+                'Cache-Control' => 'no-store, no-cache, must-revalidate, max-age=0',
+                'X-Accel-Buffering' => 'no',
+            ]);
+        }
 
         $settings = config('spikia.elevenlabs', []);
         $apiKey = (string) ($settings['api_key'] ?? '');
@@ -1307,7 +1339,7 @@ class SesionController extends Controller
             'speech_to_text_model' => ['nullable', Rule::in($sttValues)],
             'translation_model' => ['nullable', Rule::in($translationValues)],
             'text_to_speech_model' => ['nullable', Rule::in([$config['text_to_speech_model'] ?? 'gpt-4o-mini-tts'])],
-            'voice_provider' => ['nullable', Rule::in(['elevenlabs'])],
+            'voice_provider' => ['nullable', Rule::in(['elevenlabs', 'openai'])],
             'voice_gender_profile' => ['nullable', Rule::in(['male', 'female'])],
             'voice' => ['nullable', Rule::in($voiceValues)],
             'audio_delivery_mode' => ['nullable', Rule::in($audioDeliveryModes)],
@@ -2132,8 +2164,11 @@ class SesionController extends Controller
 
     private function resolveVoiceProvider(array $settings): string
     {
-        return Str::lower((string) ($settings['voice_provider'] ?? 'elevenlabs')) === 'elevenlabs'
-            ? 'elevenlabs'
+        // Antes esto devolvia 'elevenlabs' SIEMPRE (las dos ramas del ternario eran
+        // identicas - codigo muerto de un refactor anterior) - por eso synthesizeLiveAudio()
+        // nunca podia sintetizar via OpenAI aunque la sesion lo tuviera configurado.
+        return Str::lower((string) ($settings['voice_provider'] ?? 'elevenlabs')) === 'openai'
+            ? 'openai'
             : 'elevenlabs';
     }
 
@@ -2241,6 +2276,120 @@ class SesionController extends Controller
         ];
     }
 
+    /**
+     * TTS via OpenAI (/v1/audio/speech) - alternativa a ElevenLabs usando la MISMA
+     * OPENAI_API_KEY que ya usa el resto de Spikia para transcribir/traducir, sin
+     * necesitar una cuenta/clave separada. El campo "voice" de translation_settings ya
+     * usa nombres de voz de OpenAI (marin, cedar, alloy, coral, shimmer, sage - ver
+     * config('spikia.translation_simultaneous.available_voices')), asi que no hace
+     * falta ningun mapeo de nombre de voz.
+     */
+    private function requestOpenAiTtsAudioBinary(string $text, array $translationSettings): ?string
+    {
+        $apiKey = (string) config('services.openai.key', '');
+        if ($text === '' || $apiKey === '') {
+            return null;
+        }
+
+        $voice = (string) ($translationSettings['voice'] ?? 'marin');
+        $model = (string) config('spikia.translation_simultaneous.text_to_speech_model', 'gpt-4o-mini-tts');
+
+        $ch = curl_init('https://api.openai.com/v1/audio/speech');
+        curl_setopt_array($ch, [
+            CURLOPT_POST => true,
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_TIMEOUT => 15,
+            CURLOPT_CONNECTTIMEOUT => 5,
+            CURLOPT_HTTPHEADER => [
+                'Authorization: Bearer ' . $apiKey,
+                'Content-Type: application/json',
+            ],
+            CURLOPT_POSTFIELDS => json_encode([
+                'model' => $model,
+                'voice' => $voice,
+                'input' => $text,
+                'response_format' => 'mp3',
+            ]),
+        ]);
+        $response = curl_exec($ch);
+        $status = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        curl_close($ch);
+
+        if ($status !== 200 || $response === false || $response === '') {
+            Log::warning('OpenAI TTS: fallo generando audio.', ['status' => $status, 'voice' => $voice]);
+
+            return null;
+        }
+
+        return $response;
+    }
+
+    /**
+     * Version streaming (mismo patron que streamElevenLabsVoiceChunks): manda los bytes
+     * al oyente a medida que OpenAI los va generando, sin esperar la respuesta completa.
+     */
+    private function streamOpenAiTtsChunks(string $text, array $translationSettings): bool
+    {
+        $apiKey = (string) config('services.openai.key', '');
+        if ($text === '' || $apiKey === '') {
+            return false;
+        }
+
+        $voice = (string) ($translationSettings['voice'] ?? 'marin');
+        $model = (string) config('spikia.translation_simultaneous.text_to_speech_model', 'gpt-4o-mini-tts');
+        $tStart = microtime(true);
+        $tracker = (object) ['firstByteAt' => 0.0, 'totalBytes' => 0];
+
+        $ch = curl_init('https://api.openai.com/v1/audio/speech');
+        curl_setopt_array($ch, [
+            CURLOPT_POST => true,
+            CURLOPT_HTTPHEADER => [
+                'Authorization: Bearer ' . $apiKey,
+                'Content-Type: application/json',
+            ],
+            CURLOPT_POSTFIELDS => json_encode([
+                'model' => $model,
+                'voice' => $voice,
+                'input' => $text,
+                'response_format' => 'mp3',
+            ]),
+            CURLOPT_TIMEOUT => 20,
+            CURLOPT_CONNECTTIMEOUT => 5,
+            CURLOPT_WRITEFUNCTION => function ($ch, $chunk) use ($tStart, $tracker) {
+                // Header ya llego antes que el cuerpo (orden normal HTTP) - a diferencia
+                // de ElevenLabs, OpenAI SI devuelve un status HTTP real de error en vez
+                // de disfrazarlo de 200, asi que alcanza con mirar el status.
+                $status = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+                if ($status !== 200) {
+                    return strlen($chunk);
+                }
+                if ($tracker->firstByteAt === 0.0) {
+                    $tracker->firstByteAt = (microtime(true) - $tStart) * 1000;
+                }
+                $tracker->totalBytes += strlen($chunk);
+                echo $chunk;
+                if (ob_get_level() > 0) { @ob_flush(); }
+                @flush();
+
+                return strlen($chunk);
+            },
+        ]);
+        curl_exec($ch);
+        $finalStatus = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        curl_close($ch);
+
+        Log::info('spikia.openai_tts', [
+            'chars' => mb_strlen($text),
+            'voice' => $voice,
+            'ttfb_ms' => round($tracker->firstByteAt, 1),
+            'total_ms' => round((microtime(true) - $tStart) * 1000, 1),
+            'bytes' => $tracker->totalBytes,
+            'status' => $finalStatus,
+        ]);
+
+        return $finalStatus === 200 && $tracker->totalBytes > 0;
+    }
+
     private function requestElevenLabsAudioBinary(
         string $text,
         array $translationSettings,
@@ -2322,11 +2471,10 @@ class SesionController extends Controller
         string $lang = '',
         string $variant = ''
     ): ?string {
-        if ($this->resolveVoiceProvider($translationSettings) !== 'elevenlabs') {
-            return null;
-        }
+        $audioBytes = $this->resolveVoiceProvider($translationSettings) === 'openai'
+            ? $this->requestOpenAiTtsAudioBinary($text, $translationSettings)
+            : $this->requestElevenLabsAudioBinary($text, $translationSettings, $gender, $lang, $variant);
 
-        $audioBytes = $this->requestElevenLabsAudioBinary($text, $translationSettings, $gender, $lang, $variant);
         if ($audioBytes === null || $audioBytes === '') {
             return null;
         }
@@ -2343,8 +2491,12 @@ class SesionController extends Controller
      */
     public function synthesizeLiveAudioBatch(array $items, array $translationSettings, string $gender): array
     {
-        if ($items === [] || $this->resolveVoiceProvider($translationSettings) !== 'elevenlabs') {
+        if ($items === []) {
             return [];
+        }
+
+        if ($this->resolveVoiceProvider($translationSettings) === 'openai') {
+            return $this->synthesizeLiveAudioBatchOpenAi($items, $translationSettings);
         }
 
         $config = config('spikia.elevenlabs', []);
@@ -2410,6 +2562,65 @@ class SesionController extends Controller
                     'key' => $key,
                     'status' => $response?->status(),
                     'voice_id' => $voiceId,
+                ]);
+                $audioUrls[$key] = null;
+                continue;
+            }
+
+            $audioBytes = (string) $response->body();
+            if ($audioBytes === '') {
+                $audioUrls[$key] = null;
+                continue;
+            }
+
+            $filename = 'traducciones/audio_' . uniqid('', true) . '.mp3';
+            Storage::disk('public')->put($filename, $audioBytes);
+            $audioUrls[$key] = $this->publicStorageUrl($filename);
+        }
+
+        return $audioUrls;
+    }
+
+    /**
+     * Equivalente OpenAI de synthesizeLiveAudioBatchForVoice: mismo patron de Http::pool
+     * (todas las llamadas HTTP concurrentes, no una tras otra) para no sumar latencia
+     * cuando hay varios idiomas destino en el lote.
+     */
+    private function synthesizeLiveAudioBatchOpenAi(array $items, array $translationSettings): array
+    {
+        $apiKey = (string) config('services.openai.key', '');
+        if ($apiKey === '') {
+            return [];
+        }
+
+        $voice = (string) ($translationSettings['voice'] ?? 'marin');
+        $model = (string) config('spikia.translation_simultaneous.text_to_speech_model', 'gpt-4o-mini-tts');
+
+        $responses = Http::pool(function (Pool $pool) use ($items, $apiKey, $voice, $model) {
+            $requests = [];
+            foreach ($items as $key => $item) {
+                $requests[$key] = $pool
+                    ->as($key)
+                    ->withHeaders(['Authorization' => 'Bearer ' . $apiKey])
+                    ->timeout(15)
+                    ->post('https://api.openai.com/v1/audio/speech', [
+                        'model' => $model,
+                        'voice' => $voice,
+                        'input' => (string) ($item['text'] ?? ''),
+                        'response_format' => 'mp3',
+                    ]);
+            }
+
+            return $requests;
+        });
+
+        $audioUrls = [];
+        foreach ($responses as $key => $response) {
+            if (! $response || ! $response->successful()) {
+                Log::warning('OpenAI TTS batch request failed.', [
+                    'key' => $key,
+                    'status' => $response?->status(),
+                    'voice' => $voice,
                 ]);
                 $audioUrls[$key] = null;
                 continue;

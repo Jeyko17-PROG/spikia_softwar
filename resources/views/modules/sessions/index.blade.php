@@ -135,12 +135,6 @@
                                 Glosario: {{ $s->glosario?->titulo ?? 'Estándar' }}
                             </p>
                             <div class="mt-3 flex flex-wrap gap-2">
-                                <span class="inline-flex items-center rounded-full border border-cyan-400/20 bg-cyan-400/10 px-3 py-1 text-[9px] font-black uppercase tracking-[0.25em] text-cyan-200">
-                                    {{ ($sessionTranslation['translation_mode'] ?? 'voice_to_voice') === 'voice_to_voice' ? 'Modo voz a voz' : 'Modo voz a texto' }}
-                                </span>
-                                <span class="inline-flex items-center rounded-full border border-white/10 bg-white/5 px-3 py-1 text-[9px] font-black uppercase tracking-[0.25em] text-zinc-300">
-                                    IA {{ $sessionTranslation['translation_model'] ?? ($tsConfig['translation_model'] ?? 'gpt-5.4-mini') }}
-                                </span>
                                 <span class="inline-flex items-center rounded-full border border-amber-400/20 bg-amber-400/10 px-3 py-1 text-[9px] font-black uppercase tracking-[0.25em] text-amber-200">
                                     {{ ($sessionTranslation['audio_delivery_mode'] ?? 'ultra_fast') === 'premium' ? 'Audio premium' : 'Audio ultra rapido' }}
                                 </span>
