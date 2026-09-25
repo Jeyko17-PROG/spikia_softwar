@@ -1990,6 +1990,20 @@ if (config) {
         }
 
         function publishRecognizedTranscript(rawText, source = 'final') {
+            // BUG REAL encontrado con datos de produccion (sesion.id=90): esta funcion (via
+            // Web Speech API, forceBrowserSpeechRecognition=true) NO tenia ningun guard
+            // contra el motor Realtime audio+VAD activo - ambos corrian en paralelo sobre el
+            // MISMO audio, cada uno mandando su propia traduccion del mismo idioma al mismo
+            // tiempo. Eso explicaba las traducciones duplicadas/casi-duplicadas en la base
+            // de datos, el doble de carga de red/servidor por frase (sumando a la lentitud),
+            // y contribuia al error "recognition has already started" (dos sistemas
+            // reiniciando la misma instancia de SpeechRecognition). Con el motor Realtime de
+            // audio activo, la transcripcion+traduccion ya la maneja ese motor directo desde
+            // el audio - esta funcion (basada en texto de Web Speech) debe quedar inerte.
+            if (realtimeAudioEngineActive) {
+                return;
+            }
+
             const normalizedTranscript = collapseAdjacentRepeatedWords(rawText);
             const now = Date.now();
 
@@ -2805,6 +2819,7 @@ if (config) {
             };
         }
 
+        let masterBtnStarting = false;
         elements.masterBtn.addEventListener('click', async () => {
             if (isDemoExpired()) {
                 lockExpiredDemo();
@@ -2815,6 +2830,14 @@ if (config) {
                 stopLiveSession();
                 return;
             }
+
+            // Reentrancia: el handler es async y espera permiso de microfono antes de
+            // llegar a recognition.start() / setLiveUi(true) - un segundo clic durante esa
+            // espera (state.isLive todavia false) disparaba dos arranques en paralelo, causa
+            // real del "recognition has already started" reportado en vivo.
+            if (masterBtnStarting) return;
+            masterBtnStarting = true;
+            try {
 
             if (!isSecureOriginForMic()) {
                 showRecognitionError('Esta pagina debe abrirse por HTTPS o por localhost para usar el microfono.');
@@ -2897,13 +2920,23 @@ if (config) {
                     // stream solo para alimentar el medidor de nivel en vivo.
                     mediaStream = stream;
                     recognition.lang = state.lang;
-                    recognition.start();
+                    // Unico .start() de este archivo sin try/catch (todos los demas ya lo
+                    // tenian) - "Failed to execute 'start' on 'SpeechRecognition': recognition
+                    // has already started" reportado en vivo: si esta funcion se dispara dos
+                    // veces seguidas (doble clic en "iniciar"), esto tiraba una excepcion sin
+                    // atrapar que abortaba el resto del arranque (setLiveUi(true) nunca se
+                    // llamaba). Ahora falla en silencio como el resto - recognition ya estaba
+                    // corriendo, no hace falta reiniciarlo.
+                    try { recognition.start(); } catch (e) {}
                 }
 
                 setLiveUi(true);
             } catch (error) {
                 console.error('Master live start error:', error);
                 showRecognitionError(String(error.message || 'No se pudo iniciar la transmision de voz.'));
+            }
+            } finally {
+                masterBtnStarting = false;
             }
         });
 
