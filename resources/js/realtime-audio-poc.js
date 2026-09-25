@@ -37,6 +37,32 @@ export function createRealtimeAudioTranslator(config) {
     let audioSource = null;
     let audioProcessor = null;
     let onEvent = () => {};
+    let pendingMediaStream = null;
+
+    // Arranca el pipeline de audio (AudioContext + ScriptProcessorNode, trabajo en el hilo
+    // principal) SOLO cuando al menos un idioma logro conectar de verdad - antes se
+    // arrancaba sin condicion apenas se llamaba a connect(), lo que dejaba el procesamiento
+    // corriendo toda la sesion aunque NINGUNA conexion llegara a abrirse (ej. sin
+    // OPENAI_API_KEY configurada), gastando CPU del hilo principal por nada y sumando a la
+    // lentitud reportada justo al hablar (el motor de traduccion actual via texto sigue
+    // andando igual como fallback - ver isHealthy() en master.js).
+    function anyConnectionHealthy() {
+        for (const conn of connections.values()) {
+            if (conn.ws && conn.ws.readyState === WebSocket.OPEN) return true;
+        }
+        return false;
+    }
+
+    function ensureStreamingAudio() {
+        if (audioCtx || !pendingMediaStream) return;
+        startStreamingAudio(pendingMediaStream);
+    }
+
+    function stopStreamingIfIdle() {
+        if (audioCtx && !anyConnectionHealthy()) {
+            stopStreamingAudio();
+        }
+    }
 
     function connState(lang) {
         return connections.get(lang) || null;
@@ -219,6 +245,7 @@ export function createRealtimeAudioTranslator(config) {
                     conn.healthy = true;
                     conn.sessionReady = true;
                     settled = true;
+                    ensureStreamingAudio();
                     resolve(true);
                 };
 
@@ -227,6 +254,7 @@ export function createRealtimeAudioTranslator(config) {
                 socket.onerror = () => {
                     const conn = connState(lang);
                     if (conn) conn.healthy = false;
+                    stopStreamingIfIdle();
                     if (!settled) {
                         settled = true;
                         console.warn(`Realtime (audio): no se pudo conectar para "${lang}", se usara el motor actual como fallback para este idioma.`);
@@ -241,6 +269,7 @@ export function createRealtimeAudioTranslator(config) {
                         conn.sessionReady = false;
                         if (conn.ws === socket) conn.ws = null;
                     }
+                    stopStreamingIfIdle();
                     if (!settled) {
                         settled = true;
                         console.warn(`Realtime (audio): conexion cerrada antes de confirmar sesion para "${lang}".`);
@@ -250,6 +279,7 @@ export function createRealtimeAudioTranslator(config) {
             }).catch((error) => {
                 console.warn(`Realtime (audio): fallo obteniendo token para "${lang}", se usara el motor actual como fallback para este idioma.`, error);
                 connections.delete(lang);
+                stopStreamingIfIdle();
                 resolve(false);
             });
         });
@@ -262,7 +292,7 @@ export function createRealtimeAudioTranslator(config) {
      * al motor actual solo para ese idioma puntual.
      */
     async function connect(mediaStream, languages) {
-        startStreamingAudio(mediaStream);
+        pendingMediaStream = mediaStream;
         const targetLanguages = Array.from(new Set((languages || []).filter(Boolean)));
         await Promise.all(targetLanguages.map((lang) => connectLanguage(lang)));
     }
@@ -282,6 +312,7 @@ export function createRealtimeAudioTranslator(config) {
         });
         connections.clear();
         stopStreamingAudio();
+        pendingMediaStream = null;
     }
 
     return { connect, setEventHandler, isHealthy, close };

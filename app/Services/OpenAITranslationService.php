@@ -59,6 +59,37 @@ class OpenAITranslationService
     }
 
     /**
+     * Igual que transcribe(), pero SIN pasarle el idioma de antemano a Whisper: al no forzarlo,
+     * Whisper detecta libremente que idioma se esta hablando (a costa de algo de precision en
+     * frases cortas o con acento fuerte, que es justamente donde la pista de idioma mas ayuda).
+     * Se usa solo cuando el presentador activa "Detectar idioma automaticamente" - por defecto
+     * el pipeline sigue usando transcribe() con el idioma fijado manualmente, sin este trade-off.
+     *
+     * @return array{text: string, language: ?string}
+     */
+    public function transcribeWithLanguageDetection(string $audioPath, string $model): array
+    {
+        $handle = fopen($audioPath, 'r');
+
+        try {
+            $response = $this->client->audio()->transcribe([
+                'model'           => $model,
+                'file'            => $handle,
+                'response_format' => 'verbose_json',
+            ]);
+        } finally {
+            if (is_resource($handle)) {
+                fclose($handle);
+            }
+        }
+
+        return [
+            'text' => trim((string) $response->text),
+            'language' => $response->language ? strtolower((string) $response->language) : null,
+        ];
+    }
+
+    /**
      * Translate text using OpenAI Chat with the master prompt.
      * Returns the translated text string.
      */

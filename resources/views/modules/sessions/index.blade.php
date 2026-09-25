@@ -17,7 +17,7 @@
 <div class="min-h-screen bg-[#050505] text-white">
     <div class="spikia-page space-y-8">
         <div class="flex justify-center">
-            <img src="{{ asset('storage/media/images/spikia-15.png') }}" class="h-16 w-auto opacity-90 transition-opacity hover:opacity-100" alt="Spikia">
+            <img src="{{ asset('storage/media/images/spikia-15.png') }}" class="h-20 w-auto opacity-90 transition-opacity hover:opacity-100" alt="Spikia">
         </div>
 
         <div class="flex flex-col lg:flex-row lg:items-end lg:justify-between gap-6">
@@ -38,26 +38,11 @@
             </button>
         </div>
 
-        @php
-            $publicBaseConfigured = config('spikia.public_base_url');
-            $publicBaseEffective = rtrim(\App\Support\SpikiaUrl::public(url('/')), '/');
-        @endphp
-        <div class="rounded-2xl border border-white/10 bg-white/[0.03] px-5 py-4 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
-            <div>
-                <p class="text-[9px] font-black uppercase tracking-[0.35em] text-zinc-500">URL publica (QR / movil)</p>
-                <p class="mt-1 text-sm font-mono text-white break-all">{{ $publicBaseEffective }}</p>
-            </div>
-            <div class="flex flex-wrap items-center gap-3">
-                @if(empty($publicBaseConfigured))
-                    <span class="rounded-full bg-amber-400/10 border border-amber-400/30 px-3 py-1 text-[9px] font-black uppercase tracking-[0.3em] text-amber-200">Detectada automaticamente</span>
-                @else
-                    <span class="rounded-full bg-emerald-400/10 border border-emerald-400/30 px-3 py-1 text-[9px] font-black uppercase tracking-[0.3em] text-emerald-200">Fijada en .env</span>
-                @endif
-                <button type="button" onclick="copyToClipboard('{{ $publicBaseEffective }}')" class="rounded-xl border border-white/10 px-3 py-2 text-[9px] font-black uppercase tracking-[0.3em] text-zinc-400 hover:text-white transition">
-                    Copiar
-                </button>
-            </div>
-        </div>
+        {{-- Antes había un bloque acá arriba mostrando solo el dominio base de la app
+        ("URL pública (QR/móvil)") con su propio botón "Copiar" - un dato técnico de
+        diagnóstico, no un link a nada en particular, que se pisaba visualmente con el
+        "Copiar enlace" de cada sesión (ese sí es el link real y compartible). Se saca de
+        acá; cada sesión ya tiene su propio enlace y QR en su tarjeta desplegada. --}}
 
         <div class="grid grid-cols-2 gap-4 md:grid-cols-4">
             <div class="rounded-[1.8rem] border border-white/10 bg-white/5 p-5">
@@ -110,7 +95,8 @@
                         $statusClass = 'border-red-400/30 bg-red-400/10 text-red-200';
                     }
                 @endphp
-                <details class="group"
+                <details class="group" id="sesion-row-{{ $s->slug }}"
+                    @if(request('activada') === $s->slug) open @endif
                     @if($scheduledEndAt && empty($s->demo_expires_at))
                         data-session-end-at="{{ $scheduledEndAt->toIso8601String() }}"
                     @endif
@@ -141,33 +127,7 @@
                             @if($s->short_code)
                                 <p class="text-lg font-black tracking-[0.15em] text-white">{{ $s->short_code_formatted }}</p>
                             @endif
-                            <div class="space-y-2 text-center">
-                                <a href="{{ $urlTransmisionLocal }}" target="_blank" class="block text-[9px] font-black uppercase tracking-[0.25em] text-zinc-400 hover:text-white transition">
-                                    Abrir traducción
-                                </a>
-                                <a href="{{ $urlMasterLocal }}" target="_blank" class="block text-[9px] font-black uppercase tracking-[0.25em] text-zinc-400 hover:text-white transition">
-                                    Abrir panel del presentador
-                                </a>
-                                <a href="{{ $urlSubtitulosLocal }}" target="_blank" class="block text-[9px] font-black uppercase tracking-[0.25em] text-emerald-300 hover:text-white transition" title="Pantalla de solo subtitulos, para superponer en OBS/vMix">
-                                    Abrir subtítulos
-                                </a>
-                                @if(config('spikia.features.sign_avatar') && $s->has_sign_avatar)
-                                    <a href="{{ $urlAvatarLocal }}" target="_blank" class="block text-[9px] font-black uppercase tracking-[0.25em] text-fuchsia-300 hover:text-white transition" title="Demostración visual, no es interpretación real de Lengua de Señas">
-                                        Avatar 3D (demo)
-                                    </a>
-                                    @if($s->avatar_mode === 'human_live')
-                                        <a href="{{ $urlInterpreteLocal }}" target="_blank" class="block text-[9px] font-black uppercase tracking-[0.25em] text-amber-300 hover:text-white transition" title="Vista previa local de camara, sin envio real a los oyentes todavia">
-                                            Intérprete (experimental)
-                                        </a>
-                                    @endif
-                                @endif
-                                <button type="button" onclick="downloadQrPng('{{ $s->slug }}', '{{ $urlCorto }}', '{{ $s->short_code_formatted }}')" class="block text-[9px] font-black uppercase tracking-[0.25em] text-neonBlue hover:text-white transition" title="Descarga el QR listo para imprimir (imagen dentro de un .zip)">
-                                    Descargar QR para imprimir
-                                </button>
-                            </div>
-                            <button type="button" onclick="copyToClipboard('{{ $urlCorto }}')" class="block text-[9px] font-black uppercase tracking-[0.25em] text-zinc-500 hover:text-neonBlue transition">
-                                Copiar enlace
-                            </button>
+                            <p class="text-center text-[8px] font-bold uppercase tracking-[0.2em] text-zinc-600">Codigo/QR de acceso para tu publico</p>
                         </div>
 
                         <div>
@@ -185,14 +145,42 @@
                                     {{ ($sessionTranslation['audio_delivery_mode'] ?? 'ultra_fast') === 'premium' ? 'Audio premium' : 'Audio ultra rapido' }}
                                 </span>
                             </div>
-                            <div class="mt-4 flex flex-wrap gap-3">
-                                <a href="{{ $urlMasterLocal }}" class="inline-flex min-w-[104px] flex-col items-center justify-center gap-0.5 rounded-xl border border-white/10 bg-white/5 px-4 py-2 text-center hover:border-[#00d2ff]/50 hover:text-white transition">
-                                    <span class="text-[9px] font-black uppercase tracking-[0.3em]">Master</span>
-                                    <span class="text-[7px] font-bold uppercase tracking-widest text-zinc-500">Panel del presentador</span>
+                            @php
+                                $actionCardClass = 'flex flex-col gap-0.5 rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-left transition hover:bg-white/[0.08]';
+                            @endphp
+                            <div class="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
+                                <a href="{{ $urlMasterLocal }}" target="_blank" class="{{ $actionCardClass }} hover:border-[#00d2ff]/50">
+                                    <span class="text-[10px] font-black uppercase tracking-[0.3em] text-white">Master</span>
+                                    <span class="text-[9px] font-bold text-zinc-500">Vos hablás y controlás la sesión desde acá</span>
                                 </a>
-                                <a href="{{ $urlTransmisionLocal }}" class="inline-flex min-w-[104px] items-center justify-center rounded-xl border border-white/10 bg-white/5 px-4 py-2 text-[9px] font-black uppercase tracking-[0.3em] hover:border-neonBlue/50 hover:text-white transition">
-                                    Traducción
+                                <a href="{{ $urlTransmisionLocal }}" target="_blank" class="{{ $actionCardClass }} hover:border-neonBlue/50">
+                                    <span class="text-[10px] font-black uppercase tracking-[0.3em] text-white">Traducción</span>
+                                    <span class="text-[9px] font-bold text-zinc-500">Lo que ve y escucha tu público</span>
                                 </a>
+                                <a href="{{ $urlSubtitulosLocal }}" target="_blank" class="{{ $actionCardClass }} hover:border-emerald-400/50">
+                                    <span class="text-[10px] font-black uppercase tracking-[0.3em] text-emerald-300">Subtítulos</span>
+                                    <span class="text-[9px] font-bold text-zinc-500">Para proyectar solo el texto, ej. en pantalla u OBS</span>
+                                </a>
+                                <button type="button" onclick="downloadQrPng('{{ $s->slug }}', '{{ $urlCorto }}', '{{ $s->short_code_formatted }}')" class="{{ $actionCardClass }} hover:border-neonBlue/50">
+                                    <span class="text-[10px] font-black uppercase tracking-[0.3em] text-neonBlue">Descargar QR</span>
+                                    <span class="text-[9px] font-bold text-zinc-500">Listo para imprimir</span>
+                                </button>
+                                <button type="button" onclick="copyToClipboard('{{ $urlCorto }}')" class="{{ $actionCardClass }} hover:border-white/30">
+                                    <span class="text-[10px] font-black uppercase tracking-[0.3em] text-white">Copiar enlace</span>
+                                    <span class="text-[9px] font-bold text-zinc-500">Para compartir sin el QR</span>
+                                </button>
+                                @if(config('spikia.features.sign_avatar') && $s->has_sign_avatar)
+                                    <a href="{{ $urlAvatarLocal }}" target="_blank" class="{{ $actionCardClass }} hover:border-fuchsia-400/50">
+                                        <span class="text-[10px] font-black uppercase tracking-[0.3em] text-fuchsia-300">Avatar 3D (demo)</span>
+                                        <span class="text-[9px] font-bold text-zinc-500">Demostración visual, no es LSE real</span>
+                                    </a>
+                                    @if($s->avatar_mode === 'human_live')
+                                        <a href="{{ $urlInterpreteLocal }}" target="_blank" class="{{ $actionCardClass }} hover:border-amber-400/50">
+                                            <span class="text-[10px] font-black uppercase tracking-[0.3em] text-amber-300">Intérprete (experimental)</span>
+                                            <span class="text-[9px] font-bold text-zinc-500">Vista previa local de cámara</span>
+                                        </a>
+                                    @endif
+                                @endif
                             </div>
                             <div class="mt-6 rounded-2xl border border-white/5 bg-black/30 px-4 py-3 inline-flex items-center gap-3">
                                 <span class="text-[9px] font-black uppercase tracking-[0.3em] text-zinc-500">Transcripciones</span>
@@ -239,7 +227,7 @@
                             <a href="{{ route('sesiones.edit', $s->id) }}" class="inline-flex items-center justify-center rounded-xl border border-white/10 px-4 py-2 text-[9px] font-black uppercase tracking-[0.25em] text-neonBlue hover:text-white hover:border-neonBlue/40 transition">
                                 Configuración de la sesión
                             </a>
-                            <form action="{{ route('sesiones.destroy', $s->id) }}" method="POST" onsubmit="return confirm('¿Estás seguro de eliminar esta sesión?')">
+                            <form action="{{ route('sesiones.destroy', $s->id) }}" method="POST" onsubmit="return spikiaConfirmSubmit(event, '¿Estás seguro de eliminar esta sesión? Esta acción no se puede deshacer.')">
                                 @csrf
                                 @method('DELETE')
                                 <button type="submit" class="w-full inline-flex items-center justify-center rounded-xl border border-white/10 px-4 py-2 text-[9px] font-black uppercase tracking-[0.3em] text-red-400 hover:text-red-300 transition">
@@ -432,6 +420,14 @@
 
 <script>
     (() => {
+        const activada = new URLSearchParams(window.location.search).get('activada');
+        if (activada) {
+            const row = document.getElementById('sesion-row-' + activada);
+            if (row) {
+                row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            }
+        }
+
         const reloadOnce = (delay) => window.setTimeout(() => window.location.reload(), Math.max(1000, delay));
 
         document.querySelectorAll('[data-session-end-at]').forEach((row) => {

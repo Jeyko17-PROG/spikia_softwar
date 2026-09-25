@@ -1,0 +1,20 @@
+{
+	"FileVersion": 3,
+	"Version": 1,
+	"VersionName": "1.0",
+	"FriendlyName": "Spikia Sign Avatar",
+	"Description": "Conecta el avatar MetaHuman con el orquestador de tiempo real de Spikia (WebSocket) para reproducir glosas de Lengua de Señas Española en vivo.",
+	"Category": "Spikia",
+	"CreatedBy": "Spikia",
+	"CanContainContent": true,
+	"IsBetaVersion": false,
+	"IsExperimentalVersion": false,
+	"Installed": false,
+	"Modules": [
+		{
+			"Name": "SpikiaSignAvatar",
+			"Type": "Runtime",
+			"LoadingPhase": "Default"
+		}
+	]
+}

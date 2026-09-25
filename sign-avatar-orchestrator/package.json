@@ -1,0 +1,16 @@
+{
+  "name": "sign-avatar-orchestrator",
+  "version": "1.0.0",
+  "description": "Servidor orquestador de tiempo real: puente WebSocket entre Spikia (Laravel) y el avatar MetaHuman en Unreal Engine 5.",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "node --watch index.js"
+  },
+  "license": "UNLICENSED",
+  "dependencies": {
+    "express": "^4.21.2",
+    "ws": "^8.18.0",
+    "dotenv": "^16.4.7"
+  }
+}

@@ -14,7 +14,7 @@
 @endphp
 
 @if($demoExpiresAt)
-    <div class="mb-6 rounded-[1.75rem] border px-5 py-4 text-sm font-medium {{ $isExpired ? 'border-red-500/30 bg-red-500/10 text-red-100' : 'border-amber-400/20 bg-amber-400/10 text-amber-100' }}"
+    <div class="mb-4 rounded-2xl border px-4 py-2.5 text-[12px] font-medium {{ $isExpired ? 'border-red-500/30 bg-red-500/10 text-red-100' : 'border-amber-400/20 bg-amber-400/10 text-amber-100' }}"
         data-demo-banner
         data-demo-expires-at="{{ $demoExpiresAt?->toIso8601String() }}">
         @if($isExpired)
@@ -37,7 +37,7 @@
                 const seconds = Math.floor((remaining % 60000) / 1000);
                 label.textContent = `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
                 if (remaining <= 0) {
-                    banner.className = 'mb-6 rounded-[1.75rem] border px-5 py-4 text-sm font-medium border-red-500/30 bg-red-500/10 text-red-100';
+                    banner.className = 'mb-4 rounded-2xl border px-4 py-2.5 text-[12px] font-medium border-red-500/30 bg-red-500/10 text-red-100';
                     banner.textContent = @json($expiredMessage);
                     if (timer) clearInterval(timer);
                 }

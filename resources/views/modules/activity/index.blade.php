@@ -11,7 +11,7 @@
     <div class="spikia-page">
         @if(Storage::disk('public')->exists('media/images/spikia-15.png'))
             <div class="mb-8 flex justify-center">
-                <img src="{{ asset('storage/media/images/spikia-15.png') }}" class="h-16 w-auto opacity-90 transition-opacity hover:opacity-100" alt="Spikia">
+                <img src="{{ asset('storage/media/images/spikia-15.png') }}" class="h-20 w-auto opacity-90 transition-opacity hover:opacity-100" alt="Spikia">
             </div>
         @endif
 
@@ -57,13 +57,13 @@
         <div class="activity-scroll mb-8 rounded-[2rem] border border-white/10 bg-zinc-900/40 p-5 backdrop-blur-sm lg:p-6">
             <form method="GET" action="{{ route('actividad.index') }}" class="grid grid-cols-1 gap-4 items-end lg:grid-cols-[1fr_auto]">
                 <div>
-                    <label for="q" class="mb-3 block text-[9px] font-black uppercase tracking-[0.35em] text-zinc-500">Buscar sesion, fecha, usuario o texto</label>
+                    <label for="q" class="mb-3 block text-[9px] font-black uppercase tracking-[0.35em] text-zinc-500">Buscar sesion, código, fecha, usuario o texto</label>
                     <input
                         id="q"
                         name="q"
                         value="{{ $q ?? '' }}"
                         type="text"
-                        placeholder="Ej. reunion, 2026-04, cliente..."
+                        placeholder="Ej. reunion, YHW-VMP, 2026-04, cliente..."
                         class="w-full rounded-2xl border border-white/10 bg-black/40 px-5 py-4 text-sm text-white outline-none transition placeholder:text-zinc-600 focus:border-[#00d2ff]/50 focus:ring-2 focus:ring-[#00d2ff]/20"
                     >
                 </div>
@@ -114,7 +114,13 @@
                     $sesionModel = $sesion['sesion'] ?? null;
                     $isArchived = $sesionModel && method_exists($sesionModel, 'trashed') && $sesionModel->trashed();
                     $shortCode = $sesionModel?->short_code_formatted;
-                    $accesoUrl = ($sesionModel && $sesionModel->short_code && ! $isArchived)
+                    // El QR se muestra SIEMPRE que haya short_code, este archivada o no la
+                    // sesion: antes se ocultaba para sesiones archivadas ("ya no escaneable"),
+                    // pero eso dejaba el registro de Actividad casi sin QR (la mayoria de las
+                    // sesiones que aparecen ahi ya estan archivadas). Si alguien escanea el
+                    // codigo de una sesion vieja, cae en la pantalla amigable de
+                    // session-gone.blade.php en vez de un error crudo - no hace falta ocultarlo.
+                    $accesoUrl = ($sesionModel && $sesionModel->short_code)
                         ? \App\Support\SpikiaUrl::public(route('sesion.short', ['code' => $sesionModel->short_code]))
                         : null;
                     $accesoQrSvg = $accesoUrl
@@ -128,9 +134,24 @@
                                 {{ $isArchived ? 'Archivada' : 'Sesión vinculada' }}
                             </span>
                             <div class="min-w-0">
-                                <h2 class="truncate text-lg font-black italic uppercase tracking-tight text-white">{{ $sesion['titulo'] }}</h2>
+                                <div class="flex items-center gap-2 flex-wrap">
+                                    <h2 class="truncate text-lg font-black italic uppercase tracking-tight text-white">{{ $sesion['titulo'] }}</h2>
+                                    @if($shortCode)
+                                        <button
+                                            type="button"
+                                            onclick="event.preventDefault(); event.stopPropagation(); spikiaCopyCode(this, '{{ $shortCode }}')"
+                                            class="shrink-0 inline-flex items-center gap-1.5 text-[#00d2ff] text-[9px] font-black tracking-widest hover:text-white transition cursor-pointer"
+                                            title="Copiar código de sesión"
+                                        >
+                                            <span data-copy-label>{{ $shortCode }}</span>
+                                            <svg class="h-3 w-3 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/>
+                                            </svg>
+                                        </button>
+                                    @endif
+                                </div>
                                 <p class="mt-0.5 text-[10px] font-bold uppercase tracking-[0.2em] text-zinc-500">
-                                    {{ $sesion['fecha'] ?? 'Sin fecha' }} · {{ $sesion['transcripciones_count'] ?? 0 }} transcripciones
+                                    {{ $sesion['fecha'] ?? 'Sin fecha' }} · {{ $sesion['transcripciones_count'] ?? 0 }} transcripciones · <span class="font-mono">{{ $sesion['tiempo_uso_formateado'] ?? '00:00:00' }}</span> de uso
                                 </p>
                             </div>
                         </div>
@@ -164,21 +185,44 @@
                                 </div>
                             </div>
 
+                            {{-- Uso real del microfono (distinto del horario programado de arriba): cuando se
+                            activo por primera vez, cuando se dejo de usar por ultima vez, y cuanto tiempo
+                            estuvo realmente en vivo en total (puede tener pausas en el medio). --}}
+                            <div class="mt-4 space-y-3 rounded-2xl border border-white/5 bg-black/20 p-4 text-sm text-zinc-400">
+                                <p class="text-[9px] font-black uppercase tracking-[0.3em] text-zinc-600">Uso real del micrófono</p>
+                                <div class="flex items-center gap-2">
+                                    <span class="min-w-[110px] text-[9px] font-black uppercase tracking-[0.3em] text-zinc-600">Activado</span>
+                                    <span>{{ $sesion['microfono_abierto_at'] ? $sesion['microfono_abierto_at']->format('d M, Y - H:i:s') : 'Nunca se activó' }}</span>
+                                </div>
+                                <div class="flex items-center gap-2">
+                                    <span class="min-w-[110px] text-[9px] font-black uppercase tracking-[0.3em] text-zinc-600">Finalizado</span>
+                                    <span>{{ $sesion['microfono_finalizado_at'] ? $sesion['microfono_finalizado_at']->format('d M, Y - H:i:s') : ($sesion['microfono_abierto_at'] ? 'En curso' : '—') }}</span>
+                                </div>
+                                <div class="flex items-center gap-2">
+                                    <span class="min-w-[110px] text-[9px] font-black uppercase tracking-[0.3em] text-zinc-600">Tiempo de uso</span>
+                                    <span class="font-mono text-white">{{ $sesion['tiempo_uso_formateado'] ?? '00:00:00' }}</span>
+                                </div>
+                            </div>
+
                             @if($accesoQrSvg)
                                 <div class="mt-6 flex items-center gap-4 rounded-2xl border border-white/5 bg-black/30 p-4">
                                     <div class="h-[120px] w-[120px] shrink-0 overflow-hidden rounded-xl bg-white p-2 [&_svg]:block [&_svg]:h-full [&_svg]:w-full">
                                         {!! $accesoQrSvg !!}
                                     </div>
                                     <div class="min-w-0">
-                                        <p class="text-[9px] font-black uppercase tracking-[0.3em] text-zinc-500">Volver a compartir</p>
+                                        <p class="text-[9px] font-black uppercase tracking-[0.3em] text-zinc-500">{{ $isArchived ? 'Código de esta sesión' : 'Volver a compartir' }}</p>
                                         @if($shortCode)
                                             <p class="mt-1 text-base font-black tracking-[0.1em] text-white">{{ $shortCode }}</p>
                                         @endif
-                                        <a href="{{ $accesoUrl }}" target="_blank" class="mt-2 inline-block text-[9px] font-black uppercase tracking-[0.25em] text-[#00d2ff] hover:text-white transition">Abrir acceso</a>
+                                        @if($isArchived)
+                                            <p class="mt-1 text-[8px] font-bold uppercase tracking-[0.2em] text-zinc-600">Sesión archivada: quien lo escanee ve un aviso de "ya no disponible"</p>
+                                        @else
+                                            <a href="{{ $accesoUrl }}" target="_blank" class="mt-2 inline-block text-[9px] font-black uppercase tracking-[0.25em] text-[#00d2ff] hover:text-white transition">Abrir acceso</a>
+                                        @endif
                                     </div>
                                 </div>
                             @elseif($shortCode)
-                                <p class="mt-6 text-[9px] font-black uppercase tracking-[0.3em] text-zinc-600">Código {{ $shortCode }} (sesión archivada, ya no escaneable)</p>
+                                <p class="mt-6 text-[9px] font-black uppercase tracking-[0.3em] text-zinc-600">Código {{ $shortCode }}</p>
                             @endif
                         </div>
 
@@ -256,4 +300,32 @@
         </footer>
     </div>
 </div>
+
+<script>
+    function spikiaCopyCode(button, code) {
+        const label = button.querySelector('[data-copy-label]');
+        const original = label.textContent;
+        const showCopied = () => {
+            label.textContent = 'Copiado';
+            setTimeout(() => { label.textContent = original; }, 1200);
+        };
+        const fallbackCopy = () => {
+            const textarea = document.createElement('textarea');
+            textarea.value = code;
+            textarea.style.position = 'fixed';
+            textarea.style.opacity = '0';
+            document.body.appendChild(textarea);
+            textarea.select();
+            try { document.execCommand('copy'); } catch (e) {}
+            document.body.removeChild(textarea);
+            showCopied();
+        };
+
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+            navigator.clipboard.writeText(code).then(showCopied).catch(fallbackCopy);
+        } else {
+            fallbackCopy();
+        }
+    }
+</script>
 @endsection

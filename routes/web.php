@@ -24,7 +24,9 @@ Route::get('/s/{code}', [SesionController::class, 'shortCode'])
     ->name('sesion.short');
 
 // Estas rutas deben ser accesibles para que el Listener no falle
-Route::get('/sesiones/{slug}/transmision', [SesionController::class, 'transmision'])->name('sesion.transmision');
+// URI publica "/traduccion" (nombre interno de ruta sin cambiar: sesion.transmision),
+// para que el link que ve el oyente diga "traduccion" en vez del termino tecnico "transmision".
+Route::get('/sesiones/{slug}/traduccion', [SesionController::class, 'transmision'])->name('sesion.transmision');
 Route::get('/sesiones/{slug}/movil', [SesionController::class, 'movil'])->name('sesion.movil');
 Route::get('/sesiones/{slug}/avatar', [SesionController::class, 'avatar'])->name('sesion.avatar');
 Route::get('/sesiones/{slug}/subtitulos', [SesionController::class, 'subtitulos'])->name('sesion.subtitulos');
@@ -94,6 +96,13 @@ Route::middleware(['auth', 'verified'])->group(function () {
     Route::post('/sesiones/{id}/activar-idioma', [SesionController::class, 'activarIdioma'])->name('sesiones.activarIdioma');
     Route::post('/sesiones/{slug}/mensajes', [SesionController::class, 'publicarMensaje'])->name('sesiones.mensajes.store');
     Route::post('/sesiones/{slug}/procesar-audio', [SesionController::class, 'processAudio'])->name('sesiones.audio.process');
+    // Grabacion continua del audio original para "Descargar audio" - independiente de que
+    // motor este transcribiendo (navegador o OpenAI). No hace STT ni traduccion, solo guarda.
+    Route::post('/sesiones/{slug}/archivar-audio', [SesionController::class, 'archiveAudioSegment'])->name('sesiones.audio.archive');
+    // Deteccion de idioma liviana (no transcribe para guardar ni traduce) - permite que
+    // "Detectar idioma automaticamente" funcione tambien en modo microfono/Web Speech, que
+    // no tiene forma propia de detectar idioma (solo recibe texto, no audio).
+    Route::post('/sesiones/{slug}/detectar-idioma', [SesionController::class, 'detectLanguage'])->name('sesiones.audio.detect-language');
     Route::post('/sesiones/{slug}/interim', [SesionController::class, 'updateInterim'])->name('sesiones.interim.update');
     Route::patch('/sesiones/{slug}/translation-settings', [SesionController::class, 'updateTranslationSettings'])->name('sesiones.translation.update');
     Route::post('/sesiones/{slug}/voice-clone', [SesionController::class, 'cloneVoice'])->name('sesiones.voice-clone.store');

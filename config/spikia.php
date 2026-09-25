@@ -9,7 +9,30 @@ return [
         'meeting_bot' => (bool) env('ENABLE_MEETING_BOT', false),
     ],
 
+    // Pipeline de avatar en Lengua de Señas con MetaHuman (Unreal Engine 5) - ver
+    // ProcessSignGlossesJob y las carpetas sign-nlp-service/ y sign-avatar-orchestrator/ en
+    // la raiz del proyecto. Ambos servicios son independientes del backend de Laravel (Python
+    // + Node.js respectivamente) y se corren aparte; estas URLs son como Laravel los alcanza.
+    'sign_avatar_pipeline' => [
+        // Microservicio Python/FastAPI: texto -> secuencia de glosas (sign-nlp-service).
+        'nlp_service_url' => env('SIGN_NLP_SERVICE_URL', 'http://127.0.0.1:8100'),
+        'nlp_service_token' => env('SIGN_NLP_SERVICE_TOKEN', ''),
+        'nlp_service_timeout' => (float) env('SIGN_NLP_SERVICE_TIMEOUT', 6.0),
+
+        // Orquestador Node.js/WebSocket: recibe la secuencia y la reenvia, en cola, a la
+        // instancia de Unreal Engine conectada para esa sesion (sign-avatar-orchestrator).
+        'orchestrator_url' => env('SIGN_ORCHESTRATOR_URL', 'http://127.0.0.1:4100'),
+        'orchestrator_token' => env('SIGN_ORCHESTRATOR_TOKEN', ''),
+        'orchestrator_timeout' => (float) env('SIGN_ORCHESTRATOR_TIMEOUT', 3.0),
+    ],
+
     'demo_duration_minutes' => 20,
+    // Ruta al binario de ffmpeg, usado para unir los fragmentos de audio de una sesion
+    // (voz original en WebM/Opus, traduccion en MP3) en un solo archivo descargable.
+    // Por defecto asume que "ffmpeg" esta en el PATH; en este entorno local se fija la
+    // ruta exacta porque el PATH recien se actualizo (requiere reiniciar la terminal/
+    // servicio para que "ffmpeg" solo alcance sin ruta completa).
+    'ffmpeg_binary' => env('FFMPEG_BINARY', 'ffmpeg'),
     'master_base_url' => env('SPIKIA_MASTER_BASE_URL', env('APP_URL', 'http://localhost:8000')),
     'public_base_url' => env('SPIKIA_PUBLIC_BASE_URL', ''),
     'voice_provider' => env('SPIKIA_VOICE_PROVIDER', 'elevenlabs'),

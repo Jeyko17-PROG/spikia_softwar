@@ -120,7 +120,7 @@ if (config) {
             pendingDisplayTimeouts.forEach((timeoutId) => window.clearTimeout(timeoutId));
             pendingDisplayTimeouts.clear();
             latestInterimSignature = '';
-            container.innerHTML = '<p id="placeholder" class="text-zinc-600 font-light italic text-lg animate-pulse tracking-wide">Selecciona tu idioma arriba...</p>';
+            container.innerHTML = '<p id="placeholder" class="text-zinc-600 font-light italic text-lg animate-pulse tracking-wide">Esperando a que el presentador empiece a hablar...</p>';
             if (timelineList) {
                 timelineList.innerHTML = `
                     <div class="rounded-2xl border border-dashed border-white/10 bg-white/5 px-4 py-3 text-sm text-zinc-500">

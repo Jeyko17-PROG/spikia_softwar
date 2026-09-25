@@ -58,7 +58,7 @@ class DashboardController extends Controller
         return back()->with($result['type'], $result['message']);
     }
 
-    public function activateDemo(Request $request): RedirectResponse
+    public function activateDemo(Request $request): RedirectResponse|\Illuminate\Http\JsonResponse
     {
         $user = $request->user();
         abort_unless($user, 401);
@@ -110,7 +110,12 @@ class DashboardController extends Controller
 
         session()->put("spikia.demo_expires_at.$slug", $expiresAt->toIso8601String());
 
-        return redirect()->route('sesion.master', $sesion->slug)
+        // Antes esto llevaba directo a Master. A pedido: activar la demo lleva al Panel de
+        // Sesiones con esta sesion ya desplegada (via "activada"), y desde ahi el usuario
+        // abre Master/Traduccion/etc a mano con los botones que ya estan ahi - mas simple y
+        // confiable que intentar abrir varias pestañas nuevas de una (los navegadores solo
+        // dejan pasar una por click, sin importar como se ordene el codigo).
+        return redirect()->route('sesiones.index', ['activada' => $sesion->slug])
             ->with('status', 'Sesion demo creada con todos los idiomas habilitados.');
     }
 

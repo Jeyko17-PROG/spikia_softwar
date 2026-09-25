@@ -54,7 +54,7 @@
         <div class="flex items-center gap-2">
             <div class="hidden sm:flex items-center gap-2 bg-zinc-900 px-3 py-1.5 rounded-full border border-white/5">
                 <span class="text-[9px] font-black uppercase tracking-[0.25em] text-zinc-500">Idioma</span>
-                <span id="selected-language-label" class="text-[9px] font-black tracking-widest text-neonBlue">ESP-ES</span>
+                <span id="selected-language-label" class="text-[9px] font-black tracking-widest text-neonBlue">ESP-latAm</span>
             </div>
             <div class="flex items-center gap-2 bg-zinc-900 px-3 py-1.5 rounded-full border border-white/5">
                 <span id="status-dot" class="w-2 h-2 rounded-full bg-red-500 animate-pulse shadow-[0_0_8px_red]"></span>

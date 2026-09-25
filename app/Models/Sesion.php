@@ -41,6 +41,8 @@ class Sesion extends Model
         'voice_consent_at',
         'live_started_at',
         'live_accumulated_seconds',
+        'live_first_started_at',
+        'live_last_stopped_at',
         'meeting_bot_status',
         'meeting_bot_source_lang',
         // 'bot_ingest_token' se setea explicitamente desde el controlador (Str::random),
@@ -61,6 +63,8 @@ class Sesion extends Model
         'voice_consent_at' => 'datetime',
         'live_started_at' => 'datetime',
         'live_accumulated_seconds' => 'integer',
+        'live_first_started_at' => 'datetime',
+        'live_last_stopped_at' => 'datetime',
         'meeting_bot_last_heartbeat_at' => 'datetime',
     ];
 

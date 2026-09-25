@@ -149,8 +149,15 @@ final class SpikiaUrl
             return null;
         }
 
+        // OJO: antes esto solo reconocia 'localhost'/'127.0.0.1' como "URL solo-local que hay
+        // que reemplazar por una IP de LAN" - un host de desarrollo tipo "spikia.test" (Laragon,
+        // resuelve solo en ESTA maquina via el hosts file) pasaba de largo sin reemplazo,
+        // dejando el QR con una URL que ningun celular puede alcanzar ("el QR no funciona").
+        // isLocalDevHost() ya lo usa detectFromCurrentRequest() para el mismo proposito -
+        // aca lo reusamos para que ambos caminos consideren "solo local" lo mismo.
         $host = strtolower((string) ($parts['host'] ?? ''));
-        if ($host !== '' && ! in_array($host, ['localhost', '127.0.0.1', '::1'], true)) {
+        $isLocalOnly = $host === '' || in_array($host, ['localhost', '127.0.0.1', '::1'], true) || self::isLocalDevHost($host);
+        if (! $isLocalOnly) {
             return null;
         }
 

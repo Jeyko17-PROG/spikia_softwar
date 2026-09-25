@@ -6,7 +6,7 @@
 
     <div class="relative z-10 spikia-page">
         <div class="mb-8 flex justify-center">
-            <img src="{{ asset('storage/media/images/spikia-15.png') }}" class="h-16 w-auto opacity-90 transition-opacity hover:opacity-100" alt="Spikia">
+            <img src="{{ asset('storage/media/images/spikia-15.png') }}" class="h-20 w-auto opacity-90 transition-opacity hover:opacity-100" alt="Spikia">
         </div>
 
         <div class="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-8 mb-10">
@@ -51,13 +51,13 @@
         <div class="rounded-[2rem] border border-white/10 bg-zinc-900/40 backdrop-blur-sm p-5 lg:p-6 mb-8">
             <form method="GET" action="{{ route('transcripciones.listado') }}" class="grid grid-cols-1 lg:grid-cols-[1fr_auto] gap-4 items-end">
                 <div>
-                    <label for="q" class="block text-[9px] font-black uppercase tracking-[0.35em] text-zinc-500 mb-3">Buscar sesión, idioma o texto</label>
+                    <label for="q" class="block text-[9px] font-black uppercase tracking-[0.35em] text-zinc-500 mb-3">Buscar sesión, código, idioma o texto</label>
                     <input
                         id="q"
                         name="q"
                         value="{{ $q ?? '' }}"
                         type="text"
-                        placeholder="Ej. reunión, es, hola mundo..."
+                        placeholder="Ej. reunión, YHW-VMP, es, hola mundo..."
                         class="w-full rounded-2xl border border-white/10 bg-black/40 px-5 py-4 text-sm text-white placeholder:text-zinc-600 outline-none transition focus:border-[#00d2ff]/50 focus:ring-2 focus:ring-[#00d2ff]/20"
                     >
                 </div>
@@ -78,8 +78,10 @@
 
         <div class="flex flex-wrap items-center gap-3 mb-8">
             <span class="text-[9px] font-black uppercase tracking-[0.3em] text-zinc-600">Filtrar modo:</span>
+            {{-- Antes había un 3er botón "Resumen" - a pedido, queda solo "Todos" (toda la
+            info de transcripciones por sesión) y "Detalle" (el seguimiento en el tiempo,
+            fragmento por fragmento). --}}
             <a href="{{ route('transcripciones.listado', array_filter(['q' => $q ?? null])) }}" class="px-4 py-2 rounded-full text-[9px] font-black uppercase tracking-widest border transition-all {{ empty($modo) ? 'bg-[#00d2ff] border-[#00d2ff] text-white' : 'bg-zinc-900 border-white/10 text-zinc-400 hover:text-white' }}">Todos</a>
-            <a href="{{ route('transcripciones.listado', array_filter(['modo' => 'resumen', 'q' => $q ?? null])) }}" class="px-4 py-2 rounded-full text-[9px] font-black uppercase tracking-widest border transition-all {{ ($modo ?? null) === 'resumen' ? 'bg-emerald-500 border-emerald-500 text-black' : 'bg-zinc-900 border-white/10 text-zinc-400 hover:text-white' }}">Resumen</a>
             <a href="{{ route('transcripciones.listado', array_filter(['modo' => 'detalle', 'q' => $q ?? null])) }}" class="px-4 py-2 rounded-full text-[9px] font-black uppercase tracking-widest border transition-all {{ ($modo ?? null) === 'detalle' ? 'bg-amber-500 border-amber-500 text-black' : 'bg-zinc-900 border-white/10 text-zinc-400 hover:text-white' }}">Detalle</a>
             @if(($q ?? '') !== '')
                 <span class="px-4 py-2 rounded-full bg-white/5 border border-white/10 text-[9px] font-black uppercase tracking-widest text-zinc-300">
@@ -94,30 +96,45 @@
                     $sesion = $resumen['sesion'];
                     $idiomas = $resumen['idiomas'];
                     $slugBase = $resumen['slug'] ?? 'sin-slug';
-                    $idiomaBase = $idiomas->first()['idioma'] ?? 'es';
                 @endphp
 
-                <section class="rounded-[2rem] border border-white/10 bg-zinc-900/40 overflow-hidden backdrop-blur-sm">
-                    <header class="px-6 lg:px-8 py-6 border-b border-white/5 bg-white/[0.02] flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
-                        <div class="space-y-2">
-                            <p class="text-[10px] font-black uppercase tracking-[0.35em] text-zinc-500">Sesión</p>
-                            <h2 class="text-2xl lg:text-3xl font-black italic uppercase tracking-tight text-white">{{ $sesion?->titulo ?? $slugBase }}</h2>
+                <details class="group rounded-[2rem] border border-white/10 bg-zinc-900/40 overflow-hidden backdrop-blur-sm">
+                    <summary class="cursor-pointer list-none px-6 lg:px-8 py-6 border-b border-white/5 bg-white/[0.02] flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4 hover:bg-white/[0.04] transition">
+                        <div class="space-y-2 min-w-0">
+                            <div class="flex items-center gap-2 flex-wrap">
+                                <p class="text-[10px] font-black uppercase tracking-[0.35em] text-zinc-500">Sesión</p>
+                                @if($sesion?->short_code_formatted)
+                                    <button
+                                        type="button"
+                                        onclick="event.preventDefault(); event.stopPropagation(); spikiaCopyCode(this, '{{ $sesion->short_code_formatted }}')"
+                                        class="inline-flex items-center gap-1.5 text-[#00d2ff] text-[10px] font-black tracking-widest hover:text-white transition cursor-pointer"
+                                        title="Copiar código de sesión"
+                                    >
+                                        <span data-copy-label>{{ $sesion->short_code_formatted }}</span>
+                                        <svg class="h-3 w-3 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/>
+                                        </svg>
+                                    </button>
+                                @endif
+                            </div>
+                            <h2 class="text-2xl lg:text-3xl font-black italic uppercase tracking-tight text-white truncate">{{ $sesion?->titulo ?? $slugBase }}</h2>
                             <p class="text-zinc-500 text-[10px] font-medium tracking-wider">
                                 {{ $sesion?->slug ?? $slugBase }} · {{ $sesion?->created_at ? $sesion->created_at->format('d M, Y - H:i') : 'Sin fecha' }}
                             </p>
                         </div>
 
-                        <div class="flex flex-wrap items-center gap-3">
+                        <div class="flex flex-wrap items-center gap-3 shrink-0">
                             <span class="px-3 py-1 rounded-full bg-[#00d2ff]/10 text-[#00d2ff] border border-[#00d2ff]/20 text-[9px] font-black uppercase tracking-widest">
                                 {{ $idiomas->count() }} idiomas
                             </span>
                             <span class="px-3 py-1 rounded-full bg-white/5 text-zinc-300 border border-white/10 text-[9px] font-black uppercase tracking-widest">
                                 {{ $resumen['transcripciones_count'] ?? 0 }} transcripciones
                             </span>
-                            <a href="{{ route('transcripcion.descargar', [$slugBase, 'audio', $idiomaBase]) }}" class="px-4 py-2 rounded-xl bg-zinc-800 hover:bg-red-600 transition text-[9px] font-black uppercase tracking-widest">Descargar audio</a>
-                            <a href="{{ route('transcripcion.descargar', [$slugBase, 'texto', $idiomaBase]) }}" class="px-4 py-2 rounded-xl bg-zinc-800 hover:bg-[#00d2ff] transition text-[9px] font-black uppercase tracking-widest">Descargar texto</a>
+                            <svg class="h-5 w-5 shrink-0 text-zinc-500 transition-transform group-open:rotate-180" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
+                            </svg>
                         </div>
-                    </header>
+                    </summary>
 
                     <div class="p-6 lg:p-8 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
                         @foreach($idiomas as $idiomaData)
@@ -156,8 +173,11 @@
                                         <div class="max-h-60 overflow-y-auto space-y-3 pr-1">
                                             @foreach($fragmentos as $item)
                                                 <div class="rounded-xl border border-white/5 bg-white/[0.03] p-3">
-                                                    <p class="text-[9px] uppercase tracking-[0.25em] text-zinc-500 font-black mb-2">
-                                                        {{ $item->created_at ? $item->created_at->format('H:i:s') : 'N/A' }}
+                                                    <p class="text-[9px] uppercase tracking-[0.25em] text-zinc-500 font-black mb-2 flex items-center gap-2">
+                                                        <span>{{ $item->created_at ? $item->created_at->format('H:i:s') : 'N/A' }}</span>
+                                                        @if($item->hablante)
+                                                            <span class="px-2 py-0.5 rounded-full bg-indigo-500/15 text-indigo-300 border border-indigo-500/30 normal-case tracking-normal">{{ $item->hablante }}</span>
+                                                        @endif
                                                     </p>
                                                     <p class="text-sm text-zinc-200 whitespace-pre-line">
                                                         {{ $item->texto }}
@@ -179,7 +199,7 @@
                             </article>
                         @endforeach
                     </div>
-                </section>
+                </details>
             @empty
                 <div class="bg-zinc-900/20 border border-dashed border-white/10 rounded-[2rem] p-20 text-center">
                     <p class="text-[10px] font-black uppercase tracking-[0.4em] text-zinc-500">No hay transcripciones todavía</p>
@@ -207,4 +227,32 @@
     ::-webkit-scrollbar-thumb { background: #1a1a1a; border-radius: 10px; }
     ::-webkit-scrollbar-thumb:hover { background: #333; }
 </style>
+
+<script>
+    function spikiaCopyCode(button, code) {
+        const label = button.querySelector('[data-copy-label]');
+        const original = label.textContent;
+        const showCopied = () => {
+            label.textContent = 'Copiado';
+            setTimeout(() => { label.textContent = original; }, 1200);
+        };
+        const fallbackCopy = () => {
+            const textarea = document.createElement('textarea');
+            textarea.value = code;
+            textarea.style.position = 'fixed';
+            textarea.style.opacity = '0';
+            document.body.appendChild(textarea);
+            textarea.select();
+            try { document.execCommand('copy'); } catch (e) {}
+            document.body.removeChild(textarea);
+            showCopied();
+        };
+
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+            navigator.clipboard.writeText(code).then(showCopied).catch(fallbackCopy);
+        } else {
+            fallbackCopy();
+        }
+    }
+</script>
 @endsection

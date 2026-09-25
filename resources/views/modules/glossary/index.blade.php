@@ -77,7 +77,7 @@
     class="glossary-panel min-h-screen bg-[#050505] text-white">
     <div class="spikia-page">
         <div class="mb-8 flex justify-center">
-            <img src="{{ asset('storage/media/images/spikia-15.png') }}" class="h-16 w-auto opacity-90 transition-opacity hover:opacity-100" alt="Spikia">
+            <img src="{{ asset('storage/media/images/spikia-15.png') }}" class="h-20 w-auto opacity-90 transition-opacity hover:opacity-100" alt="Spikia">
         </div>
 
         <div class="mb-12 flex items-center justify-between gap-6">
@@ -130,7 +130,7 @@
                                 </svg>
                             </button>
 
-                            <form action="{{ route('glosarios.destroy', $g->id) }}" method="POST" onsubmit="return confirm('¿Eliminar este glosario?')">
+                            <form action="{{ route('glosarios.destroy', $g->id) }}" method="POST" onsubmit="return spikiaConfirmSubmit(event, '¿Eliminar este glosario? Esta acción no se puede deshacer.')">
                                 @csrf
                                 @method('DELETE')
                                 <button type="submit" class="flex h-10 w-10 items-center justify-center rounded-xl bg-zinc-800/50 text-zinc-500 transition-all hover:bg-red-500/10 hover:text-red-500">
@@ -158,15 +158,22 @@
                 <div class="relative overflow-hidden rounded-[3rem] border border-white/10 bg-zinc-900/20 p-10 shadow-2xl backdrop-blur-md">
                     <div class="absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-transparent via-[#00d2ff] to-transparent"></div>
 
-                    <div class="mb-8 flex items-center justify-between border-b border-white/5 pb-8">
+                    <div id="glosario-form-header" class="mb-8 flex items-center justify-between border-b border-white/5 pb-8">
                         <div>
                             <h3 id="formTitle" class="text-xl font-black uppercase italic tracking-[0.2em] text-[#00d2ff]">Nuevo glosario</h3>
-                            <p class="mt-2 text-[9px] font-black uppercase tracking-[0.3em] text-zinc-600">Completá el formulario, o empezá desde una plantilla abajo.</p>
+                            <p class="mt-2 text-[9px] font-black uppercase tracking-[0.3em] text-zinc-600" id="glosario-form-subtitle">Creá un glosario o tocá uno de la lista para editarlo.</p>
                         </div>
-                        <button type="button" data-new-glosario class="rounded-full bg-[#00d2ff] px-6 py-2.5 text-[10px] font-black uppercase tracking-widest text-black shadow-lg transition-all hover:bg-white">
-                            + Nuevo glosario
-                        </button>
+                        <div class="flex items-center gap-2">
+                            <button type="button" id="glosario-form-close" class="hidden rounded-full border border-white/10 px-5 py-2.5 text-[10px] font-black uppercase tracking-widest text-zinc-400 transition-all hover:border-white/25 hover:text-white">
+                                Cerrar
+                            </button>
+                            <button type="button" data-new-glosario class="rounded-full bg-[#00d2ff] px-6 py-2.5 text-[10px] font-black uppercase tracking-widest text-black shadow-lg transition-all hover:bg-white">
+                                + Nuevo glosario
+                            </button>
+                        </div>
                     </div>
+
+                    <div id="glosario-form-panel" class="hidden">
 
                     <div class="mb-6">
                         <p class="mb-3 text-[9px] font-black uppercase tracking-[0.3em] text-zinc-600">O empezá desde una plantilla (precarga términos de ejemplo, editables)</p>
@@ -239,6 +246,7 @@
                             </button>
                         </div>
                     </form>
+                    </div>
                 </div>
             </div>
         </div>

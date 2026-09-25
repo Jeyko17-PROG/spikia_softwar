@@ -14,6 +14,7 @@ class Transcripcion extends Model
         'slug',
         'texto',
         'idioma',
+        'hablante',
         'audio_url',
         'modo',
     ];

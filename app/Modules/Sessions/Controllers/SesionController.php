@@ -5,6 +5,7 @@ namespace App\Modules\Sessions\Controllers;
 use App\Events\TranscripcionCreada;
 use App\Events\TraduccionEnviada;
 use App\Http\Controllers\Controller;
+use App\Jobs\PersistTranslatedAudioSegmentJob;
 use App\Jobs\ProcessSignGlossesJob;
 use App\Models\Glosario;
 use App\Models\Sesion;
@@ -440,6 +441,8 @@ class SesionController extends Controller
             'lang_base' => ['nullable', 'string', 'max:10'],
             'gender' => ['nullable', 'string', 'max:10'],
             'save_mode' => ['nullable', 'string', 'max:20'],
+            'auto_detect_lang' => ['nullable', 'boolean'],
+            'hablante' => ['nullable', 'string', 'max:80'],
         ]);
 
         $audioFile = $request->file('audio');
@@ -453,6 +456,132 @@ class SesionController extends Controller
         }
 
         return $this->handleIncomingAudioSegment($sesion, $slug, $audioFile, $data);
+    }
+
+    /**
+     * Guarda un fragmento de audio SOLO para archivar - no hace STT ni traduccion, no le
+     * cuesta nada a OpenAI/ElevenLabs. Existe porque el reconocimiento de voz por defecto
+     * corre en el NAVEGADOR (gratis, mas rapido) y el audio real nunca llega al servidor por
+     * esa via: master.js graba en paralelo, sin importar que motor este transcribiendo, y
+     * sube cada fragmento aca para que "Descargar audio" tenga con que armar el audio
+     * completo. Se guarda como una fila de Transcripcion con texto vacio (modo
+     * "audio_archivo") para reusar la misma concatenacion por slug+idioma que ya usa
+     * TranscripcionController::descargar - las pantallas de Actividad/Transcripciones
+     * filtran estas filas sin texto para no ensuciar los listados.
+     */
+    public function archiveAudioSegment(Request $request, string $slug)
+    {
+        $sesion = Sesion::where('slug', $slug)
+            ->where('user_id', auth()->id())
+            ->firstOrFail();
+
+        if (! $sesion->live_started_at) {
+            return response()->json(['success' => false, 'message' => 'La sesion no esta en vivo.'], 422);
+        }
+
+        $data = $request->validate([
+            'audio' => ['required', 'file', 'max:25600'],
+            'lang' => ['required', 'string', 'max:10'],
+        ]);
+
+        $audioFile = $request->file('audio');
+
+        if ($errorResponse = $this->validateAudioUpload($audioFile)) {
+            return $errorResponse;
+        }
+
+        $clientExtension = strtolower((string) $audioFile->getClientOriginalExtension());
+        $mimeType = strtolower((string) $audioFile->getMimeType());
+        $extension = in_array($clientExtension, ['webm', 'ogg', 'mp3', 'wav', 'm4a', 'mp4'], true)
+            ? $clientExtension
+            : $this->audioExtensionFromMime($mimeType);
+
+        $storagePath = $audioFile->storeAs(
+            'tmp/session-audio',
+            'archive_' . Str::uuid() . '.' . $extension,
+            'local'
+        );
+
+        $sourceLang = $this->normalizeSpeechLanguage((string) $data['lang']);
+        $audioUrl = $this->persistSessionAudioSegment($storagePath, $slug, 'original', $extension);
+
+        if ($audioUrl) {
+            Transcripcion::create([
+                'user_id' => $sesion->user_id,
+                'sesion_id' => $sesion->id,
+                'slug' => $sesion->slug,
+                'texto' => '',
+                'idioma' => $sourceLang,
+                'audio_url' => $audioUrl,
+                'modo' => 'audio_archivo',
+            ]);
+        }
+
+        return response()->json(['success' => (bool) $audioUrl]);
+    }
+
+    /**
+     * Deteccion de idioma "liviana" (no transcribe para guardar, no traduce, no publica
+     * nada) - unicamente le pregunta a Whisper que idioma esta escuchando en este fragmento
+     * corto de audio. Pensada para el modo microfono/Web Speech (motor por defecto): ese
+     * motor transcribe rapido en el navegador pero NO puede detectar idioma por si solo (no
+     * expone audio, solo texto) - este endpoint corre en paralelo, sin bloquear ni afectar
+     * la transcripcion en vivo, solo para poder auto-cambiar el idioma seleccionado cuando
+     * "Detectar idioma automaticamente" esta prendido. Reusa el mismo audio que ya se manda
+     * a archivar (ver sesiones.audio.archive), no pide un permiso ni una grabacion nueva.
+     */
+    public function detectLanguage(Request $request, string $slug)
+    {
+        $sesion = Sesion::where('slug', $slug)
+            ->where('user_id', auth()->id())
+            ->firstOrFail();
+
+        if ($errorResponse = $this->ensureOpenAiConfigured()) {
+            return $errorResponse;
+        }
+
+        $data = $request->validate([
+            'audio' => ['required', 'file', 'max:25600'],
+        ]);
+
+        $audioFile = $request->file('audio');
+
+        if ($errorResponse = $this->validateAudioUpload($audioFile)) {
+            return $errorResponse;
+        }
+
+        $clientExtension = strtolower((string) $audioFile->getClientOriginalExtension());
+        $mimeType = strtolower((string) $audioFile->getMimeType());
+        $extension = in_array($clientExtension, ['webm', 'ogg', 'mp3', 'wav', 'm4a', 'mp4'], true)
+            ? $clientExtension
+            : $this->audioExtensionFromMime($mimeType);
+
+        $storagePath = $audioFile->storeAs(
+            'tmp/session-audio',
+            'langdetect_' . Str::uuid() . '.' . $extension,
+            'local'
+        );
+        $audioPath = Storage::disk('local')->path($storagePath);
+
+        try {
+            $settings = $this->resolveTranslationSettings($sesion);
+            $sttModel = (string) ($settings['speech_to_text_model'] ?? 'gpt-4o-mini-transcribe');
+            $detectionResult = $this->openai->transcribeWithLanguageDetection($audioPath, $sttModel);
+            $detectedMasterLang = $this->mapDetectedLanguageToMasterLang($detectionResult['language'] ?? null);
+        } catch (\Throwable $e) {
+            Log::warning('detectLanguage: fallo detectando idioma con OpenAI.', [
+                'slug' => $slug,
+                'message' => $e->getMessage(),
+            ]);
+            $detectedMasterLang = null;
+        } finally {
+            Storage::disk('local')->delete($storagePath);
+        }
+
+        return response()->json([
+            'success' => true,
+            'detected_lang' => $detectedMasterLang,
+        ]);
     }
 
     /**
@@ -517,12 +646,31 @@ class SesionController extends Controller
         );
         $audioPath = Storage::disk('local')->path($storagePath);
 
+        // "Detectar idioma automaticamente" (interruptor opcional, apagado por defecto en
+        // Configuracion avanzada): sin esto, siempre se le pasa a Whisper el idioma elegido
+        // a mano en el selector, lo que ayuda a transcribir mejor. Prendido, se lo sacamos
+        // para que Whisper detecte libremente que idioma se esta hablando (a costa de algo
+        // de precision en frases cortas/con acento fuerte) y usamos ese idioma detectado
+        // para el resto del pipeline en vez del que estaba seleccionado en pantalla.
+        $autoDetectLang = (bool) ($data['auto_detect_lang'] ?? false);
+        $detectedMasterLang = null;
+
         try {
-            $originalTranscript = trim($this->openai->transcribe(
-                $audioPath,
-                (string) ($settings['speech_to_text_model'] ?? 'gpt-4o-mini-transcribe'),
-                $inputLanguage
-            ));
+            if ($autoDetectLang) {
+                $sttModel = (string) ($settings['speech_to_text_model'] ?? 'gpt-4o-mini-transcribe');
+                $detectionResult = $this->openai->transcribeWithLanguageDetection($audioPath, $sttModel);
+                $originalTranscript = trim((string) ($detectionResult['text'] ?? ''));
+                $detectedMasterLang = $this->mapDetectedLanguageToMasterLang($detectionResult['language'] ?? null);
+                if ($detectedMasterLang) {
+                    $inputLanguage = $this->normalizeSpeechLanguage($detectedMasterLang);
+                }
+            } else {
+                $originalTranscript = trim($this->openai->transcribe(
+                    $audioPath,
+                    (string) ($settings['speech_to_text_model'] ?? 'gpt-4o-mini-transcribe'),
+                    $inputLanguage
+                ));
+            }
         } catch (\Throwable $e) {
             Log::error('Error procesando audio de sesion con OpenAI.', [
                 'slug' => $slug,
@@ -531,12 +679,12 @@ class SesionController extends Controller
                 'lang' => $inputLanguage,
             ]);
 
+            Storage::disk('local')->delete($storagePath);
+
             return response()->json([
                 'success' => false,
                 'message' => 'No se pudo transcribir el audio de la sesion con OpenAI.',
             ], 502);
-        } finally {
-            Storage::disk('local')->delete($storagePath);
         }
 
         $originalTranscript = preg_replace('/\s+/', ' ', $originalTranscript ?? '');
@@ -544,6 +692,10 @@ class SesionController extends Controller
         $this->clearInterimState($slug);
 
         if ($originalTranscript === '' || mb_strlen($originalTranscript) < 2) {
+            // Segmento sin voz real (silencio/ruido): no vale la pena guardarlo, se
+            // descarta igual que antes.
+            Storage::disk('local')->delete($storagePath);
+
             return response()->json([
                 'success' => true,
                 'skipped' => true,
@@ -558,10 +710,15 @@ class SesionController extends Controller
         $gender = $this->resolveVoiceGender(
             (string) ($settings['voice_gender_profile'] ?? ($data['gender'] ?? 'female'))
         );
-        $sourceLang = (string) ($data['lang'] ?? 'es-ES');
-        $sourceBase = (string) ($data['lang_base'] ?? explode('-', $sourceLang)[0] ?? 'es');
+        $sourceLang = $detectedMasterLang ?: (string) ($data['lang'] ?? 'es-ES');
+        $sourceBase = $detectedMasterLang !== null
+            ? explode('-', $detectedMasterLang)[0]
+            : (string) ($data['lang_base'] ?? explode('-', $sourceLang)[0] ?? 'es');
         $sourceVariant = str_contains($sourceLang, '-') ? $sourceLang : '';
-        $sourceAudioUrl = null;
+        // Antes este fragmento se borraba siempre (ver el finally que ya no existe arriba):
+        // "Descargar audio" nunca tenia nada que servir. Ahora se guarda en el disco publico
+        // para poder armar el audio completo de la sesion despues.
+        $sourceAudioUrl = $this->persistSessionAudioSegment($storagePath, $slug, 'original', $extension);
         $messages = [];
 
         $originalMessage = $this->storeRelayMessage($slug, [
@@ -575,7 +732,7 @@ class SesionController extends Controller
             'audio_url' => $sourceAudioUrl,
         ]);
 
-        $this->storeTranscriptionRecord($sesion, $originalTranscript, $sourceLang, $sourceAudioUrl, $saveMode);
+        $this->storeTranscriptionRecord($sesion, $originalTranscript, $sourceLang, $sourceAudioUrl, $saveMode, $data['hablante'] ?? null);
         // Canal principal: se emite de inmediato, sin esperar nada mas. Todo lo de abajo
         // (traducciones, señas) ocurre despues y no puede retrasar esta linea.
         $this->emitLiveMessageEvent($sesion, $originalMessage);
@@ -679,7 +836,23 @@ class SesionController extends Controller
                 'audio_url' => $audioUrl,
             ]);
 
-            $this->storeTranscriptionRecord($sesion, $translatedText, $targetLanguage, $audioUrl, $saveMode);
+            $transcripcionRow = $this->storeTranscriptionRecord($sesion, $translatedText, $targetLanguage, $audioUrl, $saveMode, $data['hablante'] ?? null);
+
+            // En modo ultra_fast el audio nunca se sintetiza aca arriba (ver el gate de
+            // audio_delivery_mode mas arriba en este metodo) para no agregarle latencia al
+            // pipeline en vivo: el oyente lo recibe streameado aparte, en tiempo real, via
+            // elevenlabsStream(). Este job de segundo plano genera una copia SOLO para poder
+            // armar el audio completo de la sesion despues (Descargar audio) - corre en su
+            // propia cola, no bloquea ni compite con la traduccion en vivo de nadie.
+            if ($audioUrl === null && ($settings['translation_mode'] ?? 'voice_to_voice') === 'voice_to_voice') {
+                PersistTranslatedAudioSegmentJob::dispatch(
+                    $transcripcionRow->id,
+                    $translatedText,
+                    $settings,
+                    $gender
+                )->onQueue('low-priority');
+            }
+
             $this->emitLiveMessageEvent($sesion, $translationMessage);
             $messages[] = $translationMessage;
         }
@@ -689,7 +862,34 @@ class SesionController extends Controller
             'original_transcript' => $originalTranscript,
             'messages' => $messages,
             'translation_settings' => $settings,
+            // Solo viene con valor si "Detectar idioma automaticamente" esta prendido Y
+            // Whisper detecto un idioma que mapea a uno de los soportados (master_languages)
+            // - el frontend usa esto para mover el selector de idioma solo, sin que el
+            // presentador tenga que tocarlo.
+            'detected_lang' => $detectedMasterLang,
         ]);
+    }
+
+    /**
+     * Mapea el idioma detectado por Whisper (nombre en ingles, ej. "spanish", "english") al
+     * id de master_languages correspondiente. Whisper no distingue variantes regionales
+     * (es-ES vs es-419), asi que para español siempre cae en es-ES por defecto.
+     */
+    private function mapDetectedLanguageToMasterLang(?string $whisperLanguageName): ?string
+    {
+        if (! $whisperLanguageName) {
+            return null;
+        }
+
+        $map = [
+            'english' => 'en-US',
+            'spanish' => 'es-ES',
+            'portuguese' => 'pt-BR',
+            'italian' => 'it-IT',
+            'french' => 'fr-FR',
+        ];
+
+        return $map[strtolower(trim($whisperLanguageName))] ?? null;
     }
 
     /**
@@ -1143,6 +1343,13 @@ class SesionController extends Controller
 
         if (! $sesion->live_started_at) {
             $sesion->live_started_at = now();
+            // live_first_started_at NUNCA se pisa una vez escrito: a diferencia de
+            // live_started_at (se limpia en cada pausa), este queda fijo desde la primera
+            // vez que se activo el microfono en esta sesion - lo que "Registro de Actividad"
+            // necesita mostrar como "abierto".
+            if (! $sesion->live_first_started_at) {
+                $sesion->live_first_started_at = $sesion->live_started_at;
+            }
             $sesion->save();
         }
 
@@ -1168,6 +1375,10 @@ class SesionController extends Controller
         if ($sesion->live_started_at) {
             $sesion->live_accumulated_seconds = $sesion->live_elapsed_seconds;
             $sesion->live_started_at = null;
+            // Se sobreescribe en CADA pausa/detencion (a diferencia de live_first_started_at):
+            // asi "Registro de Actividad" siempre puede mostrar el ultimo momento real en que
+            // se dejo de hablar, aunque despues se reactive el microfono otra vez.
+            $sesion->live_last_stopped_at = now();
             $sesion->save();
         }
 
@@ -1730,13 +1941,44 @@ class SesionController extends Controller
         });
     }
 
+    /**
+     * Mueve un fragmento de audio del disco local (temporal) al disco publico, para que
+     * quede disponible despues al armar el audio completo de la sesion (ver
+     * TranscripcionController::descargar). Se usa tanto para la voz original del
+     * presentador como para el audio ya traducido.
+     */
+    private function persistSessionAudioSegment(string $localStoragePath, string $slug, string $folder, string $extension): ?string
+    {
+        try {
+            if (! Storage::disk('local')->exists($localStoragePath)) {
+                return null;
+            }
+
+            $contents = Storage::disk('local')->get($localStoragePath);
+            $publicPath = 'media/sesiones/' . $slug . '/' . $folder . '/' . Str::uuid() . '.' . $extension;
+            Storage::disk('public')->put($publicPath, $contents);
+            Storage::disk('local')->delete($localStoragePath);
+
+            return Storage::disk('public')->url($publicPath);
+        } catch (\Throwable $e) {
+            Log::warning('No se pudo guardar el fragmento de audio de la sesion.', [
+                'slug' => $slug,
+                'folder' => $folder,
+                'message' => $e->getMessage(),
+            ]);
+
+            return null;
+        }
+    }
+
     private function storeTranscriptionRecord(
         Sesion $sesion,
         string $texto,
         string $idioma,
         ?string $audioUrl,
-        string $modo
-    ): void {
+        string $modo,
+        ?string $hablante = null
+    ): Transcripcion {
         $candidate = Transcripcion::query()
             ->where('sesion_id', $sesion->id)
             ->where('idioma', $idioma)
@@ -1759,7 +2001,7 @@ class SesionController extends Controller
                 'audio_url' => $audioUrl,
             ]);
 
-            return;
+            return $candidate;
         }
 
         $transcripcion = Transcripcion::create([
@@ -1768,6 +2010,7 @@ class SesionController extends Controller
             'slug' => $sesion->slug,
             'texto' => $texto,
             'idioma' => $idioma,
+            'hablante' => $hablante,
             'audio_url' => $audioUrl,
             'modo' => $modo,
         ]);
@@ -1779,6 +2022,8 @@ class SesionController extends Controller
             'texto' => Str::limit($texto, 500),
             'audio_url' => $audioUrl,
         ]);
+
+        return $transcripcion;
     }
 
     private function findReplaceableRelayMessageIndex(array $messages, array $current): ?int
@@ -2092,7 +2337,11 @@ class SesionController extends Controller
         return $this->publicStorageUrl($filename);
     }
 
-    private function synthesizeLiveAudioBatch(array $items, array $translationSettings, string $gender): array
+    /**
+     * Publico a proposito: PersistTranslatedAudioSegmentJob (cola de segundo plano) tambien
+     * lo llama para archivar audio en modo ultra_fast sin bloquear el pipeline en vivo.
+     */
+    public function synthesizeLiveAudioBatch(array $items, array $translationSettings, string $gender): array
     {
         if ($items === [] || $this->resolveVoiceProvider($translationSettings) !== 'elevenlabs') {
             return [];

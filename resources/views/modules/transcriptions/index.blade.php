@@ -46,7 +46,7 @@
                                 ENTRAR AL MASTER CONTROL
                             </a>
                             
-                            <form action="{{ route('sesiones.destroy', $item->id) }}" method="POST" onsubmit="return confirm('Eliminar sesionA')">
+                            <form action="{{ route('sesiones.destroy', $item->id) }}" method="POST" onsubmit="return spikiaConfirmSubmit(event, '¿Estás seguro de eliminar esta sesión? Esta acción no se puede deshacer.')">
                                 @csrf @method('DELETE')
                                 <button type="submit" class="w-full text-[8px] font-bold text-zinc-600 hover:text-red-500 transition-colors uppercase tracking-[0.3em]">
                                     Eliminar Registro

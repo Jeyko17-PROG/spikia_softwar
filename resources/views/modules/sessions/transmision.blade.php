@@ -36,9 +36,13 @@
             <h2 class="text-xl font-light italic text-white">Spikia <span class="font-black not-italic text-transparent bg-clip-text bg-gradient-to-r from-spikiaPurple via-zinc-400 to-neonBlue">Listener</span></h2>
         </div>
         <div class="flex items-center gap-2">
-            <div class="hidden sm:flex items-center gap-2 bg-zinc-900 px-3 py-1.5 rounded-full border border-white/5">
-                <span class="text-[9px] font-black uppercase tracking-[0.25em] text-zinc-500">Idioma</span>
-                <span id="selected-language-label" class="text-[9px] font-black tracking-widest text-neonBlue">ESP-ES</span>
+            <div class="flex items-center gap-2 rounded-full border border-cyan-400/30 bg-zinc-900 px-3 py-1.5">
+                <label for="lang-select" class="hidden text-[9px] font-black uppercase tracking-[0.2em] text-zinc-500 sm:inline">Escuchar en</label>
+                <select id="lang-select" class="rounded-full border-none bg-transparent pr-1 text-[11px] font-black tracking-widest text-cyan-200 outline-none">
+                    @foreach(config('spikia.listener_languages', []) as $language)
+                        <option value="{{ $language['id'] }}" class="bg-zinc-900 text-white" {{ $language['id'] === 'es-ES' ? 'selected' : '' }}>{{ $language['label'] }}</option>
+                    @endforeach
+                </select>
             </div>
             <div class="flex items-center gap-2 bg-zinc-900 px-3 py-1.5 rounded-full border border-white/5">
                 <span id="status-dot" class="w-2 h-2 rounded-full bg-red-500 animate-pulse shadow-[0_0_8px_red]"></span>
@@ -61,15 +65,6 @@
         </div>
     </div>
 
-    <div class="relative z-10 flex items-center justify-center gap-3 border-b border-white/5 bg-zinc-900/30 px-4 py-4 backdrop-blur-sm">
-        <label for="lang-select" class="text-[10px] font-black uppercase tracking-[0.25em] text-zinc-500">Escuchar en</label>
-        <select id="lang-select" class="rounded-xl border border-white/10 bg-zinc-950 px-4 py-2.5 text-sm font-black tracking-widest text-white shadow-lg outline-none transition-colors focus:border-cyan-400/60">
-            @foreach(config('spikia.listener_languages', []) as $language)
-                <option value="{{ $language['id'] }}" {{ $language['id'] === 'es-ES' ? 'selected' : '' }}>{{ $language['label'] }}</option>
-            @endforeach
-        </select>
-    </div>
-
     <div class="relative z-10 flex items-center justify-center gap-2 border-b border-white/5 bg-zinc-950/40 px-4 py-2">
         <span class="text-[9px] font-black uppercase tracking-[0.2em] text-zinc-600">Tamaño</span>
         <button type="button" data-subtitle-size="small" aria-label="Subtítulos pequeños" class="subtitle-size-btn rounded-lg border border-white/10 px-3 py-1 text-xs font-black text-zinc-400 transition-colors hover:border-cyan-400/50 hover:text-cyan-200">A-</button>
@@ -79,7 +74,7 @@
 
     <main class="relative z-10 flex-1 px-4 pb-16 pt-6 flex flex-col justify-center items-center overflow-hidden text-center">
         <div id="subtitles-container" class="flex w-full max-w-4xl items-center justify-center min-h-[96px]">
-            <p id="placeholder" class="text-zinc-600 font-light italic text-base sm:text-lg animate-pulse tracking-wide">Selecciona tu idioma arriba...</p>
+            <p id="placeholder" class="text-zinc-600 font-light italic text-base sm:text-lg animate-pulse tracking-wide">Esperando a que el presentador empiece a hablar...</p>
         </div>
     </main>
 

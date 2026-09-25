@@ -72,16 +72,27 @@ class ActividadController extends Controller
         // withTrashed(): una sesion archivada (borrada manualmente o vencida) sigue contando
         // como actividad ocurrida. Antes de SoftDeletes, borrar la sesion la hacia desaparecer
         // de aca sin dejar rastro - justo lo que Registro de Actividad deberia evitar.
+        // "audio_archivo": filas que solo guardan un fragmento de audio para armar la
+        // descarga completa despues (ver SesionController::archiveAudioSegment), sin texto
+        // real - se excluyen de conteos/vista previa para no ensuciar Actividad con
+        // "transcripciones" que en realidad no tienen nada que mostrar.
+        $withRealText = fn ($query) => $query->where('modo', '!=', 'audio_archivo');
+
         $query = Sesion::withTrashed()
-            ->withCount('transcripciones')
-            ->with(['transcripciones' => fn ($query) => $query->latest()->limit(1)])
+            ->withCount(['transcripciones' => $withRealText])
+            ->with(['transcripciones' => fn ($query) => $withRealText($query)->latest()->limit(1)])
             ->where('user_id', auth()->id())
             ->when($q !== '', function ($query) use ($q) {
                 $like = '%' . str_replace(['\\', '%', '_'], ['\\\\', '\%', '\_'], $q) . '%';
+                // El "codigo corto" de la sesion (ej. "YHW-VMP") se guarda sin guion
+                // (short_code = "YHWVMP") - normalizamos el termino buscado igual para que
+                // "YHW-VMP" o "yhwvmp" encuentren la misma sesion.
+                $likeCode = '%' . str_replace(['\\', '%', '_'], ['\\\\', '\%', '\_'], strtoupper(str_replace([' ', '-'], '', $q))) . '%';
 
-                $query->where(function ($nested) use ($like) {
+                $query->where(function ($nested) use ($like, $likeCode) {
                     $nested->where('titulo', 'like', $like)
                         ->orWhere('slug', 'like', $like)
+                        ->orWhere('short_code', 'like', $likeCode)
                         ->orWhere('fecha_inicio', 'like', $like)
                         ->orWhere('hora_inicio', 'like', $like)
                         ->orWhere('hora_fin', 'like', $like)
@@ -103,9 +114,18 @@ class ActividadController extends Controller
                     'sesion' => $sesion,
                     'titulo' => $sesion->titulo,
                     'slug' => $sesion->slug,
+                    'codigo' => $sesion->short_code_formatted,
                     'fecha' => $sesion->fecha_inicio,
                     'hora_inicio' => $sesion->hora_inicio,
                     'hora_fin' => $sesion->hora_fin,
+                    // Distinto del horario programado (fecha_inicio/hora_inicio/hora_fin, que
+                    // es lo planeado): esto es lo que REALMENTE paso - cuando se activo el
+                    // microfono por primera vez, cuando se dejo de usar por ultima vez, y
+                    // cuanto tiempo estuvo activo en total (puede tener pausas en el medio).
+                    'microfono_abierto_at' => $sesion->live_first_started_at,
+                    'microfono_finalizado_at' => $sesion->live_last_stopped_at,
+                    'tiempo_uso_segundos' => (int) $sesion->live_elapsed_seconds,
+                    'tiempo_uso_formateado' => $this->formatDuration((int) $sesion->live_elapsed_seconds),
                     'idiomas' => collect(is_array($sesion->idiomas) ? $sesion->idiomas : [])
                         ->filter()
                         ->values()
@@ -135,10 +155,12 @@ class ActividadController extends Controller
         $query = Sesion::withTrashed()->where('user_id', auth()->id())
             ->when($q !== '', function ($query) use ($q) {
                 $like = '%' . str_replace(['\\', '%', '_'], ['\\\\', '\%', '\_'], $q) . '%';
+                $likeCode = '%' . str_replace(['\\', '%', '_'], ['\\\\', '\%', '\_'], strtoupper(str_replace([' ', '-'], '', $q))) . '%';
 
-                $query->where(function ($nested) use ($like) {
+                $query->where(function ($nested) use ($like, $likeCode) {
                     $nested->where('titulo', 'like', $like)
                         ->orWhere('slug', 'like', $like)
+                        ->orWhere('short_code', 'like', $likeCode)
                         ->orWhere('fecha_inicio', 'like', $like)
                         ->orWhereHas('transcripciones', fn ($transcripciones) => $transcripciones->where('texto', 'like', $like));
                 });
@@ -150,8 +172,13 @@ class ActividadController extends Controller
             'sesiones' => $sessionIds->count(),
             'transcripciones' => $sessionIds->isEmpty()
                 ? 0
-                : Transcripcion::whereIn('sesion_id', $sessionIds)->count(),
+                : Transcripcion::whereIn('sesion_id', $sessionIds)->where('modo', '!=', 'audio_archivo')->count(),
         ];
+    }
+
+    private function formatDuration(int $seconds): string
+    {
+        return sprintf('%02d:%02d:%02d', intdiv($seconds, 3600), intdiv($seconds % 3600, 60), $seconds % 60);
     }
 
     private function parseDateTime($date, $time): ?Carbon

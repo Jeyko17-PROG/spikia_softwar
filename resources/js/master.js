@@ -1,5 +1,6 @@
 import { io } from 'socket.io-client';
 import { downloadBrandedQrPng } from './qr-download';
+import { spikiaAlert } from './spikia-notify';
 import { createRealtimeTranslator, reportRealtimeBenchmark } from './realtime-translate-poc.js';
 import { createRealtimeAudioTranslator } from './realtime-audio-poc.js';
 import { createDedicatedTranslationTranslator, createDedicatedTranslationSegmenter } from './realtime-translate-dedicated-poc.js';
@@ -123,6 +124,50 @@ function downloadMasterQrPngBranded() {
 
 window.downloadMasterQrPng = downloadMasterQrPngBranded;
 
+function legacyCopy(text) {
+    const textarea = document.createElement('textarea');
+    textarea.value = text;
+    textarea.style.position = 'fixed';
+    textarea.style.opacity = '0';
+    document.body.appendChild(textarea);
+    textarea.focus();
+    textarea.select();
+    let ok = false;
+    try {
+        ok = document.execCommand('copy');
+    } catch (error) {
+        ok = false;
+    }
+    textarea.remove();
+    return ok;
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+    const copyBtn = document.getElementById('master-copy-url-btn');
+    if (!copyBtn) return;
+
+    copyBtn.addEventListener('click', async () => {
+        const url = window.__SPIKIA_MASTER__?.brandUrl || '';
+        if (!url) return;
+
+        try {
+            if (navigator.clipboard && window.isSecureContext) {
+                await navigator.clipboard.writeText(url);
+                spikiaAlert('Enlace copiado al portapapeles');
+                return;
+            }
+        } catch (error) {
+            // sigue al fallback de abajo en vez de fallar en silencio
+        }
+
+        if (legacyCopy(url)) {
+            spikiaAlert('Enlace copiado al portapapeles');
+        } else {
+            spikiaAlert('No se pudo copiar automáticamente. Copialo a mano: ' + url, { tone: 'error', duration: 4500 });
+        }
+    });
+});
+
 const getVoiceProvider = () => {
     return String(window.__SPIKIA_MASTER__?.translationSettings?.voice_provider || window.__SPIKIA_MASTER__?.voiceProviderDefault || 'elevenlabs').toLowerCase() === 'elevenlabs'
         ? 'elevenlabs'
@@ -138,9 +183,9 @@ if (config) {
             transcriptionBox: document.getElementById('transcription-box'),
             timerElement: document.getElementById('session-timer'),
             selectedLanguageLabel: document.getElementById('selected-language-label'),
-            keepScreenBtn: document.getElementById('keep-screen-on-btn'),
             listenerPresenceList: document.getElementById('listener-presence-list'),
             listenerPresenceCount: document.getElementById('listener-presence-count'),
+            listenerPresenceBadge: document.getElementById('listener-presence-badge'),
             statusDot: document.getElementById('status-dot'),
             statusText: document.getElementById('status-text'),
             btnBg: document.getElementById('btn-bg-active'),
@@ -170,6 +215,11 @@ if (config) {
             sourceMic: document.getElementById('master-source-mic'),
             sourceTab: document.getElementById('master-source-tab'),
             captureStatusBadge: document.getElementById('capture-status-badge'),
+            translationPanel: document.getElementById('master-translation-panel'),
+            translationPanelToggle: document.getElementById('master-translation-toggle'),
+            speakerInput: document.getElementById('master-speaker-input'),
+            speakerQuick: document.getElementById('master-speaker-quick'),
+            speakerClear: document.getElementById('master-speaker-clear'),
         };
 
         if (!elements.masterBtn || !elements.transcriptionBox || !elements.timerElement) {
@@ -206,80 +256,43 @@ if (config) {
             window.speechSynthesis.cancel();
         }
 
+        // Antes esto era un boton manual ("Pantalla apagada/prendida") que el presentador
+        // tenia que acordarse de tocar. Se saco el boton para simplificar la pantalla: ahora
+        // se activa solo mientras la sesion esta en vivo (ver setLiveUi) y se libera sola al
+        // cortar, sin que el usuario tenga que pensar en esto.
         let screenWakeLock = null;
-        let keepScreenOn = false;
-
-        function updateKeepScreenUI() {
-            if (!elements.keepScreenBtn) return;
-            const active = !!keepScreenOn;
-            elements.keepScreenBtn.classList.toggle('border-emerald-400/60', active);
-            elements.keepScreenBtn.classList.toggle('bg-emerald-500/10', active);
-            elements.keepScreenBtn.classList.toggle('text-emerald-200', active);
-            elements.keepScreenBtn.classList.toggle('shadow-[0_0_25px_rgba(16,185,129,0.18)]', active);
-            elements.keepScreenBtn.classList.toggle('border-zinc-700/70', !active);
-            elements.keepScreenBtn.classList.toggle('bg-zinc-950/90', !active);
-            elements.keepScreenBtn.classList.toggle('text-zinc-200', !active);
-            const icon = active
-                ? '<svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9.75 17h4.5M7 9.5A5 5 0 0117 9.5v5.5a2 2 0 01-2 2H9a2 2 0 01-2-2V9.5zM9.5 4.5h5" /></svg>'
-                : '<svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9.75 17h4.5M7 9.5A5 5 0 0117 9.5v5.5a2 2 0 01-2 2H9a2 2 0 01-2-2V9.5zM9.5 4.5h5" /></svg>';
-            elements.keepScreenBtn.innerHTML = `${icon}<span>${active ? 'Pantalla prendida' : 'Pantalla apagada'}</span>`;
-            elements.keepScreenBtn.setAttribute('aria-pressed', active ? 'true' : 'false');
-        }
 
         async function requestKeepScreenOn() {
-            if (!('wakeLock' in navigator) || keepScreenOn) {
+            if (!('wakeLock' in navigator) || screenWakeLock) {
                 return;
             }
 
             try {
                 screenWakeLock = await navigator.wakeLock.request('screen');
-                keepScreenOn = true;
-                updateKeepScreenUI();
                 screenWakeLock.addEventListener('release', () => {
-                    keepScreenOn = false;
-                    updateKeepScreenUI();
+                    screenWakeLock = null;
                 });
             } catch (error) {
-                keepScreenOn = false;
-                updateKeepScreenUI();
+                screenWakeLock = null;
             }
         }
 
         async function releaseKeepScreenOn() {
-            if (!screenWakeLock) {
-                keepScreenOn = false;
-                updateKeepScreenUI();
-                return;
-            }
-
+            if (!screenWakeLock) return;
             try {
                 await screenWakeLock.release();
             } catch (error) {
                 // noop
             } finally {
                 screenWakeLock = null;
-                keepScreenOn = false;
-                updateKeepScreenUI();
             }
         }
 
-        if (elements.keepScreenBtn) {
-            elements.keepScreenBtn.addEventListener('click', async () => {
-                if (!keepScreenOn) {
-                    await requestKeepScreenOn();
-                } else {
-                    await releaseKeepScreenOn();
-                }
-            });
-
-            document.addEventListener('visibilitychange', async () => {
-                if (document.visibilityState === 'visible' && keepScreenOn && !screenWakeLock) {
-                    await requestKeepScreenOn();
-                }
-            });
-        }
-
-        updateKeepScreenUI();
+        document.addEventListener('visibilitychange', async () => {
+            if (document.visibilityState === 'visible' && state.isLive && !screenWakeLock) {
+                await requestKeepScreenOn();
+            }
+        });
 
         const targetLanguages = Array.isArray(config.targetLanguages) && config.targetLanguages.length
             ? config.targetLanguages
@@ -289,6 +302,8 @@ if (config) {
         const relayUrl = config.relayUrl;
         const transcripcionUrl = config.transcripcionUrl;
         const audioProcessUrl = config.audioProcessUrl;
+        const audioArchiveUrl = config.audioArchiveUrl;
+        const audioDetectLanguageUrl = config.audioDetectLanguageUrl;
         const interimUrl = config.interimUrl;
         const translationSettingsUrl = config.translationSettingsUrl;
         const liveTimerStartUrl = config.liveTimerStartUrl;
@@ -401,6 +416,7 @@ if (config) {
             });
 
             guardarTranscripcion(translatedText, lang);
+            updateMasterTranslationPreview(lang, translatedText);
             emitSocketMessage({
                 id: result.message?.id || crypto.randomUUID(),
                 texto: translatedText,
@@ -482,6 +498,7 @@ if (config) {
             });
 
             guardarTranscripcion(translatedText, lang);
+            updateMasterTranslationPreview(lang, translatedText);
             emitSocketMessage({
                 id: result.message?.id || crypto.randomUUID(),
                 texto: translatedText,
@@ -558,7 +575,33 @@ if (config) {
         let recorderMime = '';
         const SEGMENT_MS = 4000;            // duracion de cada segmento de audio enviado a OpenAI
         const MAX_PENDING_AUDIO_CHUNKS = 4; // tope de backlog: descartamos lo viejo si OpenAI se atrasa
+        // Grabacion de archivo: INDEPENDIENTE del motor de transcripcion (Web Speech u
+        // OpenAI) - corre siempre que hay una sesion en vivo, para que "Descargar audio"
+        // tenga algo que servir sin importar que motor esta transcribiendo.
+        let archiveRecorder = null;
+        let archiveSegmentTimer = null;
+        let archiveStream = null;
+        // Tambien marca cada cuanto se revisa el idioma cuando "Detectar idioma
+        // automaticamente" esta prendido (ver detectLanguageFromArchiveChunk). Se probo en
+        // 6s para que el cambio de idioma se sienta casi inmediato, pero eso duplica cuantas
+        // veces por minuto se reinicia el MediaRecorder y se disparan fetch() en paralelo -
+        // el sistema entero se sintio mas lento en la practica. Se volvio a 15s: prioriza
+        // que la transcripcion en vivo se sienta fluida sobre la velocidad de deteccion de
+        // idioma (que ademas hoy no hace nada util sin OPENAI_API_KEY configurada).
+        const ARCHIVE_SEGMENT_MS = 15000;
         let selectedMicDeviceId = localStorage.getItem('spikia_master_mic') || '';
+        // Varios hablantes compartiendo el mismo microfono (panel, mesa redonda): etiqueta
+        // libre que se manda junto a cada frase guardada. Vacio = comportamiento de siempre
+        // (sesion de un solo orador, no se guarda nada en Transcripcion.hablante).
+        let currentSpeaker = localStorage.getItem('spikia_master_speaker') || '';
+        // Deteccion automatica de hablante (requiere Deepgram con diarize=true - ver
+        // createDeepgramRecognizer). Con Web Speech API (motor por defecto) este toggle no
+        // tiene efecto: ese motor no expone ninguna señal de audio, solo texto, asi que no
+        // hay forma de distinguir voces - en ese caso hay que usar los botones manuales.
+        let autoSpeakerDetection = localStorage.getItem('spikia_master_auto_speaker') === '1';
+        // "Detectar idioma automaticamente": apagado por defecto - sin esto, Whisper recibe
+        // de antemano el idioma elegido en el selector, lo que ayuda a transcribir mejor.
+        let autoDetectLang = localStorage.getItem('spikia_master_auto_detect_lang') === '1';
         let micMeter = { ctx: null, analyser: null, source: null, raf: null, data: null };
         let micTestStream = null;
         let isProcessingChunk = false;
@@ -581,7 +624,13 @@ if (config) {
             listenerLang: null,
             externalAudioActive: false,
             gender: String(config.translationSettings?.voice_gender_profile || 'female').toLowerCase() === 'male' ? 'male' : 'female',
-            saveMode: elements.saveMode ? elements.saveMode.value : 'resumen',
+            // No existe (ya) un control en pantalla para elegir resumen/detalle a mano - el
+            // motor por defecto (Web Speech) igual crea una fila NUEVA por cada frase final,
+            // nunca pisa la anterior, asi que "detalle" (el seguimiento fragmento por
+            // fragmento) es lo que realmente refleja su comportamiento. Con "resumen"
+            // hardcodeado como quedo antes, el filtro "Detalle" de Transcripciones jamas
+            // tenia nada que mostrar aunque hubiera sesiones enteras transcritas.
+            saveMode: elements.saveMode ? elements.saveMode.value : 'detalle',
             lastTranscript: '',
             lastTranscriptAt: 0,
             lastInterimTranslationText: '',
@@ -666,6 +715,7 @@ if (config) {
         function stopLiveSession() {
             state.isLive = false;
             state.isRecognitionStarting = false;
+            stopArchiveRecording();
             if (realtimeTranslator) realtimeTranslator.close();
             if (realtimeAudioTranslator) realtimeAudioTranslator.close();
             if (realtimeDedicatedTranslator) realtimeDedicatedTranslator.close();
@@ -817,12 +867,13 @@ if (config) {
                 startLiveTimerOnServer();
 
                 elements.statusDot.className = 'relative inline-flex rounded-full h-3 w-3 bg-cyan-400 animate-pulse shadow-[0_0_10px_#22d3ee]';
-                elements.statusText.innerText = 'LIVE RUNNING';
+                elements.statusText.innerText = 'EN VIVO';
                 if (elements.btnBg) elements.btnBg.style.opacity = '1';
                 intervals.visualizer = setInterval(() => {
                     elements.bars.forEach((b) => (b.style.height = `${Math.random() * 60 + 20}%`));
                 }, 150);
                 updateCaptureStatusBadge();
+                requestKeepScreenOn();
                 return;
             }
 
@@ -845,10 +896,11 @@ if (config) {
             stopLiveTimerOnServer();
 
             elements.statusDot.className = 'relative inline-flex rounded-full h-3 w-3 bg-zinc-700';
-            elements.statusText.innerText = 'SYSTEM STANDBY';
+            elements.statusText.innerText = 'Activar audio';
             if (elements.btnBg) elements.btnBg.style.opacity = '0';
             elements.bars.forEach((b) => (b.style.height = '15%'));
             updateCaptureStatusBadge();
+            releaseKeepScreenOn();
         }
 
         function collapseAdjacentRepeatedWords(text) {
@@ -863,7 +915,8 @@ if (config) {
             if (ph) ph.remove();
             const p = document.createElement('div');
             p.className = 'p-6 mb-4 bg-zinc-900/50 border border-white/10 rounded-[2rem] animate-in fade-in slide-in-from-bottom-4 duration-700';
-            p.innerHTML = `<span class="text-indigo-500 font-black text-[10px] block mb-2 uppercase tracking-[0.2em]">${langLabel}</span><p class="text-2xl font-light leading-relaxed text-white">${collapseAdjacentRepeatedWords(text)}</p>`;
+            const headerLabel = currentSpeaker ? `${currentSpeaker} · ${langLabel}` : langLabel;
+            p.innerHTML = `<span class="text-indigo-400 font-bold text-[8px] block mb-1 uppercase tracking-[0.15em] opacity-80">${headerLabel}</span><p class="text-2xl font-light leading-relaxed text-white">${collapseAdjacentRepeatedWords(text)}</p>`;
             elements.transcriptionBox.appendChild(p);
             elements.transcriptionBox.scrollTo({ top: elements.transcriptionBox.scrollHeight, behavior: 'smooth' });
         }
@@ -872,6 +925,43 @@ if (config) {
             if (elements.statusText) {
                 elements.statusText.innerText = text;
             }
+        }
+
+        // Panel de traduccion EN VIVO dentro del propio Master (para que el presentador vea
+        // que se esta enviando sin tener que abrir el link del oyente aparte). Solo LEE el
+        // texto ya traducido que cada motor produce (batch clasico, Realtime brazo A/B, PoC
+        // texto) - no cambia en nada el guardado/emision/broadcast existente hacia los
+        // oyentes, que sigue corriendo exactamente igual.
+        function updateMasterTranslationPreview(lang, text) {
+            if (!elements.translationPanel || !lang) return;
+
+            const normalized = collapseAdjacentRepeatedWords(text || '');
+            if (!normalized) return;
+
+            const placeholder = elements.translationPanel.querySelector('[data-translation-placeholder]');
+            if (placeholder) placeholder.remove();
+
+            let card = elements.translationPanel.querySelector(`[data-translation-lang="${lang}"]`);
+            if (!card) {
+                card = document.createElement('div');
+                card.dataset.translationLang = lang;
+                card.className = 'rounded-2xl border border-emerald-500/20 bg-emerald-500/5 p-4 min-w-0';
+                const label = document.createElement('p');
+                label.className = 'text-[9px] font-black uppercase tracking-[0.3em] text-emerald-400 mb-2';
+                label.dataset.translationLabel = '1';
+                const textEl = document.createElement('p');
+                textEl.className = 'text-sm text-zinc-200 leading-relaxed break-words';
+                textEl.dataset.translationText = '1';
+                card.appendChild(label);
+                card.appendChild(textEl);
+                elements.translationPanel.appendChild(card);
+            }
+
+            // A pedido: esta consola solo identifica el IDIOMA que se esta traduciendo, no
+            // el hablante (el hablante se ve unicamente en la transcripcion principal, ver
+            // updateUIBox) - evita mostrar la misma info dos veces con etiquetas distintas.
+            card.querySelector('[data-translation-label]').textContent = formatLanguageLabel(lang);
+            card.querySelector('[data-translation-text]').textContent = normalized;
         }
 
         function upsertInterimPreview(text, langLabel) {
@@ -893,7 +983,8 @@ if (config) {
                 elements.transcriptionBox.appendChild(box);
             }
 
-            box.innerHTML = `<span class="text-cyan-300 font-black text-[10px] block mb-2 uppercase tracking-[0.2em]">${langLabel} · EN VIVO</span><p class="text-2xl font-light leading-relaxed text-white/90">${normalized}</p>`;
+            const interimHeader = currentSpeaker ? `${currentSpeaker} · ${langLabel} · EN VIVO` : `${langLabel} · EN VIVO`;
+            box.innerHTML = `<span class="text-cyan-300 font-bold text-[8px] block mb-1 uppercase tracking-[0.15em] opacity-80">${interimHeader}</span><p class="text-2xl font-light leading-relaxed text-white/90">${normalized}</p>`;
             elements.transcriptionBox.scrollTo({ top: elements.transcriptionBox.scrollHeight, behavior: 'smooth' });
         }
 
@@ -1037,7 +1128,7 @@ if (config) {
                         ? 'Para traducir Zoom/Meet: ábrelo en otra pestaña → aquí pulsa Iniciar → en el selector del navegador elige esa pestaña y marca "Compartir audio". Solo en Chrome/Edge de escritorio.'
                         : 'Comparte el audio de una pestaña o video: pulsa Iniciar y en el selector del navegador elige esa pestaña marcando "Compartir audio". Solo en Chrome/Edge de escritorio.';
                 } else {
-                    elements.micHint.textContent = 'Elige tu micrófono y pulsa Probar: la barra debe moverse al hablar.';
+                    elements.micHint.textContent = 'Pulsá "Probar" y hablá: la barra de arriba debe moverse.';
                 }
             }
 
@@ -1199,6 +1290,60 @@ if (config) {
             });
         }
         setCaptureSource(captureSource);
+
+        const autoDetectLangCheckbox = document.getElementById('master-auto-detect-lang');
+        if (autoDetectLangCheckbox) {
+            autoDetectLangCheckbox.checked = autoDetectLang;
+            autoDetectLangCheckbox.addEventListener('change', () => {
+                autoDetectLang = autoDetectLangCheckbox.checked;
+                localStorage.setItem('spikia_master_auto_detect_lang', autoDetectLang ? '1' : '0');
+            });
+        }
+
+        // Varios hablantes: los 3 botones rapidos + el input de texto libre controlan la
+        // MISMA variable (currentSpeaker) - lo ultimo que se toco gana. highlightSpeakerQuick()
+        // solo resalta un boton rapido si el texto actual coincide EXACTO con su etiqueta.
+        function highlightSpeakerQuick() {
+            if (!elements.speakerQuick) return;
+            elements.speakerQuick.querySelectorAll('.speaker-quick-btn').forEach((btn) => {
+                const active = btn.getAttribute('data-speaker') === currentSpeaker;
+                btn.classList.toggle('bg-indigo-600', active);
+                btn.classList.toggle('border-indigo-500', active);
+                btn.classList.toggle('text-white', active);
+                btn.classList.toggle('text-zinc-400', !active);
+            });
+        }
+
+        function setCurrentSpeaker(value) {
+            currentSpeaker = String(value || '').trim().slice(0, 80);
+            localStorage.setItem('spikia_master_speaker', currentSpeaker);
+            if (elements.speakerInput) elements.speakerInput.value = currentSpeaker;
+            highlightSpeakerQuick();
+        }
+
+        if (elements.speakerInput) {
+            elements.speakerInput.value = currentSpeaker;
+            elements.speakerInput.addEventListener('input', () => setCurrentSpeaker(elements.speakerInput.value));
+        }
+        if (elements.speakerQuick) {
+            elements.speakerQuick.querySelectorAll('.speaker-quick-btn').forEach((btn) => {
+                btn.addEventListener('click', () => setCurrentSpeaker(btn.getAttribute('data-speaker')));
+            });
+        }
+        if (elements.speakerClear) {
+            elements.speakerClear.addEventListener('click', () => setCurrentSpeaker(''));
+        }
+        highlightSpeakerQuick();
+
+        const autoSpeakerCheckbox = document.getElementById('master-auto-speaker');
+        if (autoSpeakerCheckbox) {
+            autoSpeakerCheckbox.checked = autoSpeakerDetection;
+            autoSpeakerCheckbox.addEventListener('change', () => {
+                autoSpeakerDetection = autoSpeakerCheckbox.checked;
+                localStorage.setItem('spikia_master_auto_speaker', autoSpeakerDetection ? '1' : '0');
+            });
+        }
+
         populateMicDevices();
         if (navigator.mediaDevices && typeof navigator.mediaDevices.addEventListener === 'function') {
             navigator.mediaDevices.addEventListener('devicechange', populateMicDevices);
@@ -1371,10 +1516,11 @@ if (config) {
         }
 
         function highlightLanguageButton(langId) {
-            const select = document.getElementById('master-lang-select');
-            if (select && select.value !== langId) {
-                select.value = langId;
-            }
+            document.querySelectorAll('.master-lang-option').forEach((btn) => {
+                const active = btn.getAttribute('data-lang') === langId;
+                btn.classList.toggle('bg-white/10', active);
+                btn.querySelector('.master-lang-option-check')?.classList.toggle('hidden', !active);
+            });
         }
 
         function pruneInactiveListeners() {
@@ -1397,10 +1543,13 @@ if (config) {
                 .sort((a, b) => (b.lastSeenAt || 0) - (a.lastSeenAt || 0));
 
             elements.listenerPresenceCount.textContent = `${listeners.length} activos`;
+            if (elements.listenerPresenceBadge) {
+                elements.listenerPresenceBadge.textContent = String(listeners.length);
+            }
 
             if (!listeners.length) {
                 elements.listenerPresenceList.innerHTML = `
-                    <div class="rounded-2xl border border-dashed border-white/10 bg-white/5 px-4 py-4 text-sm text-zinc-500">
+                    <div class="rounded-xl border border-dashed border-white/10 bg-white/5 px-3 py-1.5 text-[10px] text-zinc-500">
                         Esperando listeners conectados...
                     </div>
                 `;
@@ -1415,7 +1564,7 @@ if (config) {
                     : '<span class="inline-flex items-center rounded-full border border-white/10 bg-white/5 px-2 py-1 text-[9px] font-black uppercase tracking-[0.25em] text-zinc-400">Audio OFF</span>';
 
                 return `
-                    <article class="rounded-2xl border border-white/10 bg-white/5 px-4 py-4">
+                    <article class="rounded-xl border border-white/10 bg-white/5 px-3 py-2.5">
                         <div class="flex items-start justify-between gap-3">
                             <div>
                                 <p class="text-[10px] font-black uppercase tracking-[0.3em] text-zinc-500">${listener.listenerLabel || 'Listener'}</p>
@@ -1600,6 +1749,7 @@ if (config) {
                         texto,
                         idioma,
                         modo: state.saveMode,
+                        hablante: currentSpeaker || null,
                     }),
                 });
 
@@ -1703,6 +1853,7 @@ if (config) {
                         publicarMensaje(entry.traduccion, rLang, rVar, 'traduccion', translationId);
                     }
                     guardarTranscripcion(entry.traduccion, targetLang);
+                    updateMasterTranslationPreview(targetLang, entry.traduccion);
                     emitSocketMessage({
                         id: translationId,
                         texto: entry.traduccion,
@@ -1751,6 +1902,7 @@ if (config) {
             });
 
             guardarTranscripcion(translated, lang);
+            updateMasterTranslationPreview(lang, translated);
             emitSocketMessage({
                 id: result.message?.id || translationId,
                 texto: translated,
@@ -1785,6 +1937,7 @@ if (config) {
                     const rLang = lang.split('-')[0];
                     const rVar = lang.includes('-') ? lang : '';
                     guardarTranscripcion(entry.traduccion, lang);
+                    updateMasterTranslationPreview(lang, entry.traduccion);
                     emitSocketMessage({
                         id: entry.message?.id || crypto.randomUUID(),
                         texto: entry.traduccion,
@@ -1917,6 +2070,12 @@ if (config) {
             formData.append('lang_base', state.langBase);
             formData.append('gender', state.gender);
             formData.append('save_mode', state.saveMode);
+            if (autoDetectLang) {
+                formData.append('auto_detect_lang', '1');
+            }
+            if (currentSpeaker) {
+                formData.append('hablante', currentSpeaker);
+            }
 
             const response = await fetch(audioProcessUrl, {
                 method: 'POST',
@@ -1933,6 +2092,8 @@ if (config) {
             if (!response.ok || payload.success === false) {
                 throw new Error(payload.message || 'No se pudo procesar el audio de la sesion.');
             }
+
+            maybeApplyAutoDetectedLanguage(payload.detected_lang);
 
             if (!payload.original_transcript) {
                 return;
@@ -2083,6 +2244,182 @@ if (config) {
             }, SEGMENT_MS);
         }
 
+        // Si "Detectar idioma automaticamente" esta prendido y se detecto un idioma distinto
+        // al que estaba seleccionado, movemos el selector solo (mismo camino que si el
+        // presentador lo hubiera tocado a mano, para que quede todo sincronizado: motor de
+        // reconocimiento, traducciones, listeners, etc). Compartida entre el pipeline de
+        // OpenAI (tab/video) y la deteccion liviana en modo microfono/Web Speech.
+        function maybeApplyAutoDetectedLanguage(detectedLang) {
+            if (!autoDetectLang || !detectedLang || detectedLang === state.lang) {
+                return;
+            }
+            const option = document.querySelector(`.master-lang-option[data-lang="${detectedLang}"]`);
+            if (option) {
+                applyLanguageSelection({
+                    lang: option.getAttribute('data-lang'),
+                    base: option.getAttribute('data-lang-base'),
+                    name: option.getAttribute('data-lang-name'),
+                    speech: option.getAttribute('data-speech-lang'),
+                });
+            }
+        }
+
+        // Deteccion de idioma liviana para modo microfono/Web Speech: ese motor transcribe
+        // rapido en el navegador pero no puede detectar idioma por si solo (no expone audio,
+        // solo texto). Reusa el MISMO blob que ya se manda a archivar (uploadArchiveChunk),
+        // sin pedir una grabacion aparte - se dispara como mucho una vez por fragmento de
+        // archivo (~15s), asi que el costo extra de Whisper es minimo.
+        async function detectLanguageFromArchiveChunk(blob, filename) {
+            if (!autoDetectLang || backendPipelineEnabled || !audioDetectLanguageUrl || !state.isLive) {
+                return;
+            }
+
+            const formData = new FormData();
+            formData.append('audio', blob, filename);
+
+            try {
+                const response = await fetch(audioDetectLanguageUrl, {
+                    method: 'POST',
+                    headers: {
+                        'Accept': 'application/json',
+                        'X-CSRF-TOKEN': csrfToken,
+                    },
+                    credentials: 'same-origin',
+                    body: formData,
+                });
+                if (!response.ok) return;
+                const payload = await readJsonResponse(response, '').catch(() => null);
+                if (payload) {
+                    maybeApplyAutoDetectedLanguage(payload.detected_lang);
+                }
+            } catch (error) {
+                // silencioso: la deteccion de idioma es un extra, nunca debe interrumpir la
+                // transcripcion en vivo que ya esta corriendo por Web Speech
+                console.warn('No se pudo detectar el idioma automaticamente:', error);
+            }
+        }
+
+        // Sube un fragmento de archivo al backend en segundo plano. Si falla (red caida,
+        // sesion vencida, etc.) no interrumpe la sesion en vivo - solo se pierde ese
+        // fragmento del archivo final.
+        async function uploadArchiveChunk(blob) {
+            if (!blob || blob.size < 2048 || !audioArchiveUrl) {
+                return;
+            }
+
+            const mimeType = blob.type || archiveRecorder?.mimeType || 'audio/webm';
+            const extension = mimeType.includes('ogg')
+                ? 'ogg'
+                : mimeType.includes('mp4')
+                    ? 'm4a'
+                    : mimeType.includes('mpeg')
+                        ? 'mp3'
+                        : mimeType.includes('wav')
+                            ? 'wav'
+                            : 'webm';
+
+            const filename = `archive-${Date.now()}.${extension}`;
+            const formData = new FormData();
+            formData.append('audio', blob, filename);
+            formData.append('lang', state.lang);
+
+            try {
+                await fetch(audioArchiveUrl, {
+                    method: 'POST',
+                    headers: {
+                        'Accept': 'application/json',
+                        'X-CSRF-TOKEN': csrfToken,
+                    },
+                    credentials: 'same-origin',
+                    body: formData,
+                });
+            } catch (error) {
+                console.warn('No se pudo archivar un fragmento de audio:', error);
+            }
+
+            // No se espera (no-await): la deteccion de idioma es secundaria, no debe demorar
+            // ni un milisegundo el guardado del archivo de audio de arriba.
+            detectLanguageFromArchiveChunk(blob, filename);
+        }
+
+        // Igual patron que startNextAudioSegment(): segmentos independientes y completos
+        // (con cabecera valida), no timeslice() - pero esto corre SIEMPRE que hay sesion en
+        // vivo, sin depender de backendPipelineEnabled ni del motor de reconocimiento.
+        function startNextArchiveSegment() {
+            if (!state.isLive || !archiveStream || !audioArchiveUrl) {
+                return;
+            }
+
+            const parts = [];
+            let recorder;
+            try {
+                const mime = getPreferredRecorderMimeType();
+                recorder = mime
+                    ? new MediaRecorder(archiveStream, { mimeType: mime })
+                    : new MediaRecorder(archiveStream);
+            } catch (error) {
+                return;
+            }
+
+            archiveRecorder = recorder;
+
+            recorder.ondataavailable = (event) => {
+                if (event.data && event.data.size) {
+                    parts.push(event.data);
+                }
+            };
+
+            recorder.onstop = () => {
+                if (parts.length) {
+                    const blob = new Blob(parts, { type: recorder.mimeType || 'audio/webm' });
+                    uploadArchiveChunk(blob);
+                }
+                if (state.isLive && archiveStream) {
+                    startNextArchiveSegment();
+                }
+            };
+
+            try {
+                recorder.start();
+            } catch (error) {
+                return;
+            }
+
+            archiveSegmentTimer = setTimeout(() => {
+                if (recorder.state !== 'inactive') {
+                    try { recorder.stop(); } catch (e) {}
+                }
+            }, ARCHIVE_SEGMENT_MS);
+        }
+
+        function startArchiveRecording(stream) {
+            if (!audioArchiveUrl || !stream || typeof MediaRecorder === 'undefined') {
+                return;
+            }
+            archiveStream = stream;
+            startNextArchiveSegment();
+        }
+
+        function stopArchiveRecording() {
+            archiveStream = null;
+
+            if (archiveSegmentTimer) {
+                clearTimeout(archiveSegmentTimer);
+                archiveSegmentTimer = null;
+            }
+
+            const recorder = archiveRecorder;
+            archiveRecorder = null;
+
+            if (recorder && recorder.state !== 'inactive') {
+                try {
+                    recorder.stop();
+                } catch (error) {
+                    //
+                }
+            }
+        }
+
         function applyLanguageSelection(payload, shouldEmit = true) {
             const langId = payload.lang || state.lang;
             const langBase = payload.base || state.langBase;
@@ -2191,6 +2528,11 @@ if (config) {
                     encoding: 'linear16',
                     sample_rate: String(TARGET_SAMPLE_RATE),
                     channels: '1',
+                    // Diarizacion automatica: Deepgram identifica CUANTAS voces distintas hay
+                    // y etiqueta cada palabra con un indice de hablante (0, 1, 2...) - a
+                    // diferencia de Web Speech API, que no expone ninguna señal de audio a
+                    // este codigo (solo texto), Deepgram si puede distinguir voces reales.
+                    diarize: 'true',
                 });
 
                 const glossaryTerms = Array.isArray(config.glossaryTerms) ? config.glossaryTerms : [];
@@ -2236,11 +2578,31 @@ if (config) {
                         if (!alt) return;
                         const transcript = (alt.transcript || '').trim();
                         if (!transcript) return;
+
+                        // Hablante dominante de este fragmento: la mayoria de las palabras
+                        // suelen ser de UNA sola persona por frase, asi que el indice que mas
+                        // se repite entre alt.words[].speaker es una aproximacion solida de
+                        // "quien dijo esta frase" - undefined si Deepgram todavia no diarizo
+                        // nada (arranque de la sesion) o el plan/modelo no lo soporta.
+                        let speaker;
+                        if (Array.isArray(alt.words) && alt.words.length) {
+                            const counts = new Map();
+                            alt.words.forEach((w) => {
+                                if (typeof w.speaker === 'number') {
+                                    counts.set(w.speaker, (counts.get(w.speaker) || 0) + 1);
+                                }
+                            });
+                            if (counts.size) {
+                                speaker = [...counts.entries()].sort((a, b) => b[1] - a[1])[0][0];
+                            }
+                        }
+
                         if (listeners.onresult) {
                             listeners.onresult({
                                 text: transcript,
                                 isFinal: Boolean(data.is_final),
                                 speechFinal: Boolean(data.speech_final),
+                                speaker,
                             });
                         }
                     } catch (e) {
@@ -2294,6 +2656,20 @@ if (config) {
             recognition.onresult = (result) => {
                 if (!state.isLive) return;
                 setStatus('ESCUCHANDO VOZ');
+
+                // Varios hablantes AUTOMATICO (solo disponible con Deepgram + diarize=true -
+                // Web Speech API no expone ninguna señal de audio a este codigo, asi que con
+                // ese motor la unica opcion es la etiqueta manual, ver setCurrentSpeaker).
+                // autoSpeakerDetection es un toggle aparte (ver wiring en el DOM mas abajo):
+                // apagado por defecto para no pisar una etiqueta manual sin que el usuario lo
+                // haya pedido.
+                if (autoSpeakerDetection && typeof result.speaker === 'number') {
+                    const detectedLabel = `Hablante ${result.speaker + 1}`;
+                    if (detectedLabel !== currentSpeaker) {
+                        setCurrentSpeaker(detectedLabel);
+                    }
+                }
+
                 if (result.isFinal) {
                     if (interimPublishTimer) {
                         clearTimeout(interimPublishTimer);
@@ -2449,6 +2825,11 @@ if (config) {
                 state.isLive = true;
                 state.isRecognitionStarting = false;
 
+                // Archivo de audio: independiente del motor de transcripcion elegido
+                // (Web Speech / OpenAI / Deepgram) - asegura que "Descargar audio" siempre
+                // tenga el audio original completo de la sesion, sea cual sea el motor.
+                startArchiveRecording(stream);
+
                 // PoC/benchmark Realtime: UNA sola conexion para toda la sesion, se abre
                 // aqui en paralelo (no bloquea el arranque del mic) - ver requisito de no
                 // abrir/cerrar una conexion por frase. Si falla, isHealthy() sigue en
@@ -2508,13 +2889,18 @@ if (config) {
 
         startDemoCountdown();
 
-        document.getElementById('master-lang-select')?.addEventListener('change', function () {
-            const option = this.options[this.selectedIndex];
-            applyLanguageSelection({
-                lang: this.value,
-                base: option.getAttribute('data-lang-base'),
-                name: option.getAttribute('data-lang-name'),
-                speech: option.getAttribute('data-speech-lang'),
+        document.querySelectorAll('.master-lang-option').forEach((btn) => {
+            btn.addEventListener('click', function () {
+                applyLanguageSelection({
+                    lang: this.getAttribute('data-lang'),
+                    base: this.getAttribute('data-lang-base'),
+                    name: this.getAttribute('data-lang-name'),
+                    speech: this.getAttribute('data-speech-lang'),
+                });
+                document.getElementById('master-lang-panel')?.classList.add('hidden');
+                document.getElementById('master-lang-toggle')?.setAttribute('aria-expanded', 'false');
+                const caret = document.getElementById('master-lang-toggle-caret');
+                if (caret) caret.style.transform = 'rotate(0deg)';
             });
         });
 
@@ -2814,6 +3200,52 @@ if (config) {
             });
         }
 
+        (() => {
+            const langToggle = document.getElementById('master-lang-toggle');
+            const langPanel = document.getElementById('master-lang-panel');
+            const langCaret = document.getElementById('master-lang-toggle-caret');
+            if (!langToggle || !langPanel) return;
+
+            const setLangPanelOpen = (open) => {
+                langPanel.classList.toggle('hidden', !open);
+                langToggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+                if (langCaret) langCaret.style.transform = open ? 'rotate(180deg)' : 'rotate(0deg)';
+            };
+
+            langToggle.addEventListener('click', (event) => {
+                event.stopPropagation();
+                setLangPanelOpen(langPanel.classList.contains('hidden'));
+            });
+
+            document.addEventListener('click', (event) => {
+                if (!langPanel.classList.contains('hidden') && !langPanel.contains(event.target) && event.target !== langToggle) {
+                    setLangPanelOpen(false);
+                }
+            });
+        })();
+
+        (() => {
+            const listenersToggle = document.getElementById('master-listeners-toggle');
+            const listenersPanel = document.getElementById('master-listeners-panel');
+            if (!listenersToggle || !listenersPanel) return;
+
+            const setListenersPanelOpen = (open) => {
+                listenersPanel.classList.toggle('hidden', !open);
+                listenersToggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+            };
+
+            listenersToggle.addEventListener('click', (event) => {
+                event.stopPropagation();
+                setListenersPanelOpen(listenersPanel.classList.contains('hidden'));
+            });
+
+            document.addEventListener('click', (event) => {
+                if (!listenersPanel.classList.contains('hidden') && !listenersPanel.contains(event.target) && event.target !== listenersToggle) {
+                    setListenersPanelOpen(false);
+                }
+            });
+        })();
+
         if (elements.voiceSelect) {
             currentVoice = pickVoiceForGender(state.gender, currentVoice);
             renderVoiceSelect(state.gender, currentVoice);
@@ -2884,7 +3316,7 @@ if (config) {
                 if (elements.statusDot) {
                     elements.statusDot.className = 'relative inline-flex rounded-full h-3 w-3 bg-cyan-400 animate-pulse shadow-[0_0_10px_#22d3ee]';
                 }
-                setStatus('LIVE RUNNING');
+                setStatus('EN VIVO');
             } else {
                 setStatus('CONEXION RESTABLECIDA');
             }

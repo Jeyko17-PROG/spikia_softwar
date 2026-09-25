@@ -16,6 +16,10 @@ class TranscriptionHistoryService
     {
         $search = trim($search);
         $like = '%' . $this->escapeLike($search) . '%';
+        // El "codigo corto" de la sesion (ej. "YHW-VMP") se guarda sin guion en la base
+        // (short_code = "YHWVMP") - normalizamos el termino buscado igual (sin espacios ni
+        // guiones, en mayusculas) para que buscar "YHW-VMP" o "yhwvmp" encuentre lo mismo.
+        $likeCode = '%' . $this->escapeLike(strtoupper(str_replace([' ', '-'], '', $search))) . '%';
         $lastTranscriptionSubquery = Transcripcion::query()
             ->selectRaw('MAX(created_at)')
             ->whereColumn('sesion_id', 'sesiones.id')
@@ -28,10 +32,11 @@ class TranscriptionHistoryService
         $paginator = Sesion::withTrashed()
             ->where('user_id', $user->id)
             ->whereHas('transcripciones', fn (Builder $query) => $this->applyModeFilter($query, $mode))
-            ->when($search !== '', function (Builder $query) use ($like, $mode) {
-                $query->where(function (Builder $nested) use ($like, $mode) {
+            ->when($search !== '', function (Builder $query) use ($like, $likeCode, $mode) {
+                $query->where(function (Builder $nested) use ($like, $likeCode, $mode) {
                     $nested->where('titulo', 'like', $like)
                         ->orWhere('slug', 'like', $like)
+                        ->orWhere('short_code', 'like', $likeCode)
                         ->orWhereHas('transcripciones', function (Builder $transcripciones) use ($like, $mode) {
                             $this->applyModeFilter($transcripciones, $mode)
                                 ->where(function (Builder $match) use ($like) {
@@ -66,12 +71,14 @@ class TranscriptionHistoryService
             ->groupBy('sesion_id');
 
         $searchNeedle = Str::lower($search);
+        $searchNeedleCode = Str::lower(str_replace([' ', '-'], '', $search));
 
-        $mapped = $sessions->map(function (Sesion $sesion) use ($transcripcionesPorSesion, $search, $searchNeedle) {
+        $mapped = $sessions->map(function (Sesion $sesion) use ($transcripcionesPorSesion, $search, $searchNeedle, $searchNeedleCode) {
             $sessionMatchesSearch = $search !== ''
                 && (
                     Str::contains(Str::lower((string) $sesion->titulo), $searchNeedle)
                     || Str::contains(Str::lower((string) $sesion->slug), $searchNeedle)
+                    || ($searchNeedleCode !== '' && Str::contains(Str::lower((string) $sesion->short_code), $searchNeedleCode))
                 );
 
             $idiomas = collect($transcripcionesPorSesion->get($sesion->id, collect()))
@@ -124,6 +131,11 @@ class TranscriptionHistoryService
 
     private function applyModeFilter(Builder $query, ?string $mode): Builder
     {
+        // "audio_archivo": filas que solo guardan un fragmento de audio para armar la
+        // descarga completa despues (SesionController::archiveAudioSegment), sin texto real -
+        // se excluyen siempre de este listado, sin importar el filtro Todos/Detalle elegido.
+        $query->where('modo', '!=', 'audio_archivo');
+
         return $query->when(in_array($mode, ['resumen', 'detalle'], true), fn (Builder $builder) => $builder->where('modo', $mode));
     }
 
