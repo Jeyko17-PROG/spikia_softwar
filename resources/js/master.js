@@ -393,12 +393,31 @@ if (config) {
          * camino de persistencia/relay/broadcast que el motor actual, con los 3 timestamps
          * clave (inicio de habla real, primer resultado, resultado final) para el benchmark.
          */
-        async function handleRealtimeAudioFinal(utterance, translatedText, finishedAt, lang) {
+        function handleRealtimeAudioFinal(utterance, translatedText, finishedAt, lang) {
             const rLang = lang.split('-')[0];
             const rVar = lang.includes('-') ? lang : '';
             const originalText = utterance.sourceText || '(sin transcript de origen)';
 
-            const result = await reportRealtimeBenchmark({
+            // La traduccion ya esta lista (vino de OpenAI Realtime) - se entrega YA a la
+            // pantalla del Master y a los oyentes. Antes esto esperaba (await) la respuesta
+            // del POST de persistencia/benchmark antes de mostrar nada: ese POST solo guarda
+            // historial y metricas, no aporta nada que el usuario necesite ver, y agregaba
+            // un round-trip completo de red+servidor de demora pura antes de que la
+            // traduccion "apareciera" - justo el efecto de lentitud reportado.
+            guardarTranscripcion(translatedText, lang);
+            updateMasterTranslationPreview(lang, translatedText);
+            emitSocketMessage({
+                id: crypto.randomUUID(),
+                texto: translatedText,
+                idioma: rLang,
+                variante: rVar,
+                genero: state.gender,
+                tipo: 'traduccion',
+                available_at: Math.floor(utterance.speechStartedAt / 1000),
+                published_at: Math.floor(Date.now() / 1000),
+            });
+
+            reportRealtimeBenchmark({
                 realtimeBenchmarkUrl: config.realtimeBenchmarkUrl,
                 csrfToken,
             }, {
@@ -414,20 +433,7 @@ if (config) {
                 t_realtime_received: finishedAt,
                 t_first_result: utterance.firstResultAt,
                 timeline: Array.isArray(utterance.timeline) ? utterance.timeline : [],
-            });
-
-            guardarTranscripcion(translatedText, lang);
-            updateMasterTranslationPreview(lang, translatedText);
-            emitSocketMessage({
-                id: result.message?.id || crypto.randomUUID(),
-                texto: translatedText,
-                idioma: rLang,
-                variante: rVar,
-                genero: state.gender,
-                tipo: 'traduccion',
-                available_at: result.message?.available_at || Math.floor(utterance.speechStartedAt / 1000),
-                published_at: result.message?.published_at || Math.floor(Date.now() / 1000),
-            });
+            }).catch((e) => console.warn('No se pudo reportar el benchmark de traduccion:', e));
         }
 
         // Brazo B (gpt-realtime-translate, streaming continuo): la propia heuristica de
