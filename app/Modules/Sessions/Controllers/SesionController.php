@@ -1141,7 +1141,7 @@ class SesionController extends Controller
         // Provider elegido en la sesion (ver updateTranslationSettings): 'openai' reusa la
         // MISMA OPENAI_API_KEY que ya usa el resto de Spikia, sin necesitar una cuenta de
         // ElevenLabs separada.
-        if (Str::lower((string) ($translationSettings['voice_provider'] ?? 'elevenlabs')) === 'openai') {
+        if (Str::lower((string) ($translationSettings['voice_provider'] ?? 'openai')) === 'openai') {
             $audioBytes = $this->requestOpenAiTtsAudioBinary($text, $translationSettings);
 
             if ($audioBytes === null || $audioBytes === '') {
@@ -1209,7 +1209,7 @@ class SesionController extends Controller
             (string) ($data['gender'] ?? ($translationSettings['voice_gender_profile'] ?? 'female'))
         );
 
-        if (Str::lower((string) ($translationSettings['voice_provider'] ?? 'elevenlabs')) === 'openai') {
+        if (Str::lower((string) ($translationSettings['voice_provider'] ?? 'openai')) === 'openai') {
             return response()->stream(function () use ($text, $translationSettings) {
                 if (! $this->streamOpenAiTtsChunks($text, $translationSettings)) {
                     Log::warning('OpenAI TTS streaming fallo.', ['voice' => $translationSettings['voice'] ?? null]);
@@ -2167,7 +2167,7 @@ class SesionController extends Controller
         // Antes esto devolvia 'elevenlabs' SIEMPRE (las dos ramas del ternario eran
         // identicas - codigo muerto de un refactor anterior) - por eso synthesizeLiveAudio()
         // nunca podia sintetizar via OpenAI aunque la sesion lo tuviera configurado.
-        return Str::lower((string) ($settings['voice_provider'] ?? 'elevenlabs')) === 'openai'
+        return Str::lower((string) ($settings['voice_provider'] ?? 'openai')) === 'openai'
             ? 'openai'
             : 'elevenlabs';
     }
@@ -2656,7 +2656,7 @@ class SesionController extends Controller
             'speech_to_text_model' => $data['speech_to_text_model'] ?? ($config['speech_to_text_model'] ?? 'gpt-4o-mini-transcribe'),
             'translation_model' => $data['translation_model'] ?? ($config['translation_model'] ?? 'gpt-4o-mini'),
             'text_to_speech_model' => $data['text_to_speech_model'] ?? ($config['text_to_speech_model'] ?? 'gpt-4o-mini-tts'),
-            'voice_provider' => 'elevenlabs',
+            'voice_provider' => $data['voice_provider'] ?? ($config['voice_provider'] ?? 'openai'),
             'voice_gender_profile' => $voiceGenderProfile,
             'voice' => $voice,
             'audio_delivery_mode' => $data['audio_delivery_mode'] ?? ($config['audio_delivery_mode'] ?? 'ultra_fast'),

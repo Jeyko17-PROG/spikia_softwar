@@ -514,11 +514,9 @@ if (config) {
 
         const availableVoiceProfiles = normalizeVoiceProfiles(config.availableVoices || []);
         let currentVoice = config.translationSettings?.voice || 'marin';
-        // 'elevenlabs' o 'openai' - ambos sintetizan voz real (mismo endpoint del backend,
-        // el servidor decide con cual segun este valor guardado). Antes esto quedaba
-        // hardcodeado a 'elevenlabs' en cada guardado sin importar nada mas - no habia
-        // forma de elegir OpenAI desde la UI aunque el backend ya lo soportara.
-        let currentVoiceProvider = getVoiceProvider();
+        // OpenAI es el unico proveedor de voz habilitado (ElevenLabs se retiro: no hay
+        // API key configurada y no se necesita clonado de voz para esta demo).
+        let currentVoiceProvider = 'openai';
         const socket = config.socketUrl ? io(config.socketUrl, {
             transports: ['websocket', 'polling'],
             reconnection: true,
@@ -1516,19 +1514,18 @@ if (config) {
         state.langName = formatLanguageLabel(state.lang);
 
         function updateVoiceProviderUI() {
-            const label = currentVoiceProvider === 'openai' ? 'OpenAI' : 'ElevenLabs';
             if (elements.voiceProviderLabel) {
-                elements.voiceProviderLabel.textContent = label;
+                elements.voiceProviderLabel.textContent = 'OpenAI';
             }
+            // ElevenLabs se retiro de la UI: el boton de cambio de proveedor y el panel de
+            // clonado de voz (exclusivo de ElevenLabs) quedan ocultos, OpenAI es el unico
+            // proveedor disponible.
             if (elements.voiceProviderToggle) {
-                elements.voiceProviderToggle.textContent = `Cambiar a ${currentVoiceProvider === 'openai' ? 'ElevenLabs' : 'OpenAI'}`;
+                elements.voiceProviderToggle.classList.add('hidden');
             }
-            // Clonar voz es una funcion exclusiva de ElevenLabs (OpenAI no ofrece clonado de
-            // voz via API) - se oculta en vez de dejarla ahi rota/confusa cuando el
-            // proveedor activo es OpenAI.
             const clonePanel = document.getElementById('voice-clone-panel');
             if (clonePanel) {
-                clonePanel.classList.toggle('hidden', currentVoiceProvider === 'openai');
+                clonePanel.classList.add('hidden');
             }
         }
 
@@ -2966,44 +2963,11 @@ if (config) {
             });
         });
 
-        if (elements.voiceProviderToggle) {
-            elements.voiceProviderToggle.addEventListener('click', async () => {
-                const previousProvider = currentVoiceProvider;
-                currentVoiceProvider = currentVoiceProvider === 'openai' ? 'elevenlabs' : 'openai';
-                updateVoiceProviderUI();
-
-                if (elements.voiceStatus) {
-                    elements.voiceStatus.textContent = 'Guardando...';
-                    elements.voiceStatus.classList.remove('text-red-400');
-                }
-
-                const ok = await persistTranslationSettings({
-                    voice_provider: currentVoiceProvider,
-                    voice_gender_profile: state.gender,
-                    voice: currentVoice,
-                });
-
-                if (!ok) {
-                    currentVoiceProvider = previousProvider;
-                    updateVoiceProviderUI();
-                    if (elements.voiceStatus) {
-                        elements.voiceStatus.textContent = 'No se pudo cambiar el proveedor de voz.';
-                        elements.voiceStatus.classList.add('text-red-400');
-                    }
-                    return;
-                }
-
-                if (elements.voiceStatus) {
-                    elements.voiceStatus.textContent = `Proveedor activo: ${currentVoiceProvider === 'openai' ? 'OpenAI' : 'ElevenLabs'}`;
-                }
-            });
-        }
-
         updateVoiceProviderUI();
         renderListenerPresence();
 
         function updateIaPanelSummary() {
-            const provider = currentVoiceProvider === 'openai' ? 'OpenAI' : 'ElevenLabs';
+            const provider = 'OpenAI';
             const genderLabel = state.gender === 'male' ? 'Male' : 'Female';
             if (!elements.iaPanelSummary) return;
             elements.iaPanelSummary.textContent = `${provider} - ${genderLabel} - ${currentVoice}`;

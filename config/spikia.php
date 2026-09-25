@@ -35,7 +35,7 @@ return [
     'ffmpeg_binary' => env('FFMPEG_BINARY', 'ffmpeg'),
     'master_base_url' => env('SPIKIA_MASTER_BASE_URL', env('APP_URL', 'http://localhost:8000')),
     'public_base_url' => env('SPIKIA_PUBLIC_BASE_URL', ''),
-    'voice_provider' => env('SPIKIA_VOICE_PROVIDER', 'elevenlabs'),
+    'voice_provider' => env('SPIKIA_VOICE_PROVIDER', 'openai'),
     'socket_enabled' => (bool) env('SPIKIA_SOCKET_ENABLED', false),
     'socket_url' => env('SPIKIA_SOCKET_URL'),
     // Worker Node.js separado (ver /meet-bot) que entra a una reunion de Meet/Zoom como
@@ -157,7 +157,7 @@ return [
         'translation_model'        => 'gpt-4o-mini',
         'translation_premium_model' => 'gpt-4o',
         'text_to_speech_model'     => 'gpt-4o-mini-tts',
-        'voice_provider'           => env('SPIKIA_VOICE_PROVIDER', 'elevenlabs'),
+        'voice_provider'           => env('SPIKIA_VOICE_PROVIDER', 'openai'),
         'voice_gender_profile'     => 'female',
         'voice'                    => 'marin',
         'audio_delivery_mode'      => env('SPIKIA_AUDIO_DELIVERY_MODE', 'ultra_fast'),

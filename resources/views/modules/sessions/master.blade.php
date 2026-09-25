@@ -286,16 +286,13 @@ window.__SPIKIA_MASTER__ = @json($masterConfig);
                     <div class="flex items-center justify-between gap-3">
                         <div class="min-w-0">
                             <p class="text-[8px] font-black uppercase tracking-[0.25em] text-zinc-500">Proveedor</p>
-                            <p id="master-voice-provider-label" class="mt-1 text-[10px] font-black uppercase tracking-[0.22em] text-white truncate">ElevenLabs</p>
+                            <p id="master-voice-provider-label" class="mt-1 text-[10px] font-black uppercase tracking-[0.22em] text-white truncate">OpenAI</p>
                         </div>
-                        <button type="button" id="master-voice-provider-toggle" class="shrink-0 rounded-full border border-cyan-400/20 bg-cyan-400/10 px-3 py-2 text-[9px] font-black uppercase tracking-[0.2em] text-cyan-200 transition hover:border-cyan-400/40 hover:bg-cyan-400/20">
-                            Cambiar a OpenAI
-                        </button>
+                        <button type="button" id="master-voice-provider-toggle" class="hidden shrink-0 rounded-full border border-cyan-400/20 bg-cyan-400/10 px-3 py-2 text-[9px] font-black uppercase tracking-[0.2em] text-cyan-200 transition hover:border-cyan-400/40 hover:bg-cyan-400/20"></button>
                     </div>
-                    <p class="mt-2 text-[8px] leading-relaxed text-zinc-600">OpenAI usa la misma clave que ya tenés configurada (sin cuenta aparte). ElevenLabs permite clonar la voz del orador; OpenAI no.</p>
                 </div>
 
-                <div id="voice-clone-panel" class="rounded-xl border border-violet-400/15 bg-violet-400/5 px-3 py-3 space-y-2.5" data-cloned="{{ $sesion->cloned_voice_id ? '1' : '0' }}">
+                <div id="voice-clone-panel" class="hidden rounded-xl border border-violet-400/15 bg-violet-400/5 px-3 py-3 space-y-2.5" data-cloned="{{ $sesion->cloned_voice_id ? '1' : '0' }}">
                     <p class="text-[8px] font-black uppercase tracking-[0.25em] text-zinc-500">Clonar voz del orador</p>
 
                     <div id="voice-clone-idle" class="{{ $sesion->cloned_voice_id ? 'hidden' : '' }} space-y-2.5">
