@@ -203,11 +203,28 @@ export function createRealtimeAudioTranslator(config) {
                 }
                 onEvent('delta', payload, now, lang);
             } else if (payload.type === 'response.done') {
+                recordEvent(lang, 'output_translation_completed', now);
+                recordEvent(lang, 'response_completed', now);
+
+                // Filtro anti-alucinacion (encontrado con datos reales: "yo" traducido como
+                // "Creo que las drogas ya han sido inyectadas, ¿verdad?", frases inventadas
+                // sin relacion con el audio real). Un response.done SIN que este mismo turno
+                // haya pasado por vad_speech_stopped/input_committed significa que el modelo
+                // genero una respuesta sin audio de entrada real que traducir (turno vacio,
+                // ruido, o continuacion automatica de la sesion) - el modelo, forzado a
+                // "responder siempre con la traduccion", inventa una frase plausible en vez
+                // de quedarse en silencio. Se descarta en vez de mostrarsela al oyente.
+                const hadRealTurn = conn.timeline.some((e) => e.name === 'vad_speech_stopped')
+                    && conn.timeline.some((e) => e.name === 'input_committed');
+
+                if (!hadRealTurn) {
+                    console.warn(`Realtime (audio) [${lang}]: respuesta descartada (sin turno de voz real, probable alucinacion).`, payload);
+                    return;
+                }
+
                 const textNode = (payload.response?.output || [])
                     .flatMap((item) => item.content || [])
                     .find((c) => c.type === 'output_text' || c.type === 'text');
-                recordEvent(lang, 'output_translation_completed', now);
-                recordEvent(lang, 'response_completed', now);
                 onEvent('final', { text: (textNode?.text || '').trim(), timeline: [...conn.timeline] }, now, lang);
             } else if (payload.type === 'error') {
                 onEvent('error', payload, now, lang);
